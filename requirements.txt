@@ -1,0 +1,73 @@
+# Core dependencies
+numpy>=1.20.0
+SimpleITK>=2.0.0
+torch>=1.9.0
+nibabel>=3.2.0
+pydicom>=2.2.0
+scikit-image>=0.18.0
+scikit-learn>=0.24.0
+matplotlib>=3.4.0
+pandas>=1.3.0
+pyyaml>=5.4.0
+
+# Deep learning tools
+tensorboard>=2.6.0
+torchvision>=0.10.0
+
+# Visualization and image processing
+opencv-python>=4.5.0
+pillow>=8.2.0
+
+# Reporting and document generation
+reportlab>=3.5.0
+
+# Progress bars and utilities
+tqdm>=4.61.0
+
+# Optional: Deep learning framework extensions
+# pytorch-lightning>=1.4.0
+
+# Optional: Interactive visualization
+# plotly>=5.1.0
+# ipywidgets>=7.6.0
+
+# Optional: Notebook development
+# jupyterlab>=3.0.0
+
+# Optional: Advanced data augmentation
+# albumentations>=1.0.0
+
+# GUI
+PySide6>=6.1.0
+QtAwesome>=1.0.2
+
+# Testing
+pytest>=6.2.5
+pytest-cov>=2.12.1
+
+# Development
+flake8>=3.9.0
+black>=21.5b2
+isort>=5.9.1
+
+# Xử lý dữ liệu DICOM và ảnh y tế
+dicom2nifti>=2.3.0
+dcm2niix>=0.1.0
+
+# Trực quan hóa
+vtk>=9.0.0
+ipywidgets>=7.6.0
+
+# Giao diện người dùng
+streamlit>=1.0.0  # Cho giao diện web
+
+# Xử lý đa luồng và tối ưu
+joblib>=1.0.0
+numba>=0.54.0
+
+# Đóng gói và triển khai
+setuptools>=58.0.0
+wheel>=0.37.0
+
+# Ghi log và theo dõi thí nghiệm
+mlflow>=1.20.0 

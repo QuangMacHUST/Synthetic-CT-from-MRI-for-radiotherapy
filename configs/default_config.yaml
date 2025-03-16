@@ -1,0 +1,307 @@
+# =============================================================================
+# Default Configuration for MRI to Synthetic CT Conversion
+# =============================================================================
+
+# General settings
+general:
+  logging_level: INFO                 # Logging level [INFO, DEBUG, WARNING, ERROR]
+  use_gpu: true                       # Use GPU for computation if available
+  gpu_index: 0                        # GPU index to use if multiple GPUs are available
+  random_seed: 42                     # Random seed for reproducibility
+  models_dir: models                  # Directory for model storage
+  results_dir: results                # Directory for results storage
+  temp_dir: temp                      # Directory for temporary files
+
+# Input/Output settings
+io:
+  input_format: [nifti, dicom]        # Supported input formats
+  output_format: [nifti, dicom]       # Supported output formats
+  mri_dir: data/input/mri             # Default directory for MRI images
+  ct_dir: data/input/ct               # Default directory for CT images (for training or evaluation)
+  output_dir: data/output             # Default output directory for synthetic CT
+  report_template: report_template.md # Template for report generation
+
+# Preprocessing settings
+preprocessing:
+  bias_field_correction:
+    enable: true                      # Enable N4 bias field correction
+    shrink_factor: 4                  # Shrink factor for bias field correction
+    number_of_iterations: [50, 50, 30, 20]  # Iterations at each level
+    convergence_threshold: 0.001      # Convergence threshold
+    
+  denoising:
+    enable: true                      # Enable denoising
+    method: gaussian                  # Denoising method [gaussian, bilateral, nlm]
+    params:
+      gaussian:
+        sigma: 0.5                    # Sigma for Gaussian filter
+      bilateral:
+        domain_sigma: 0.5             # Domain sigma for bilateral filter
+        range_sigma: 50.0             # Range sigma for bilateral filter
+      nlm:
+        patch_radius: 1               # Patch radius for non-local means filter
+        search_radius: 3              # Search radius for non-local means filter
+        h: 0.05                       # H parameter for non-local means filter
+  
+  normalization:
+    enable: true                      # Enable intensity normalization
+    method: minmax                    # Normalization method [minmax, z-score, histogram]
+    params:
+      minmax:
+        min: 0.0                      # Minimum value after normalization
+        max: 1.0                      # Maximum value after normalization
+      z_score:
+        mask_background: true         # Mask background for z-score normalization
+      histogram:
+        num_landmarks: 10             # Number of landmarks for histogram matching
+        match_reference: true         # Match to reference histogram
+
+  cropping:
+    enable: true                      # Enable cropping
+    method: boundingbox               # Cropping method [boundingbox, foreground]
+    params:
+      boundingbox:
+        margin: [10, 10, 10]          # Margin around bounding box in voxels
+      foreground:
+        threshold: 0.01               # Threshold for foreground detection
+
+  registration:
+    enable: false                     # Enable registration (usually for atlas-based)
+    method: rigid                     # Registration method [rigid, affine, deformable]
+    reference_image: null             # Reference image for registration
+    params:
+      rigid:
+        metric: mi                    # Metric for rigid registration [mi, mse]
+        optimizer: gradient_descent   # Optimizer [gradient_descent, powell]
+      affine:
+        metric: mi                    # Metric for affine registration
+        optimizer: gradient_descent   # Optimizer
+      deformable:
+        metric: mi                    # Metric for deformable registration
+        transform: bspline            # Transform type [bspline, demons]
+        grid_spacing: [10, 10, 10]    # Grid spacing for BSpline transform
+
+  resampling:
+    enable: true                      # Enable resampling
+    output_spacing: [1.0, 1.0, 1.0]   # Output spacing in mm
+    output_size: null                 # Output size in voxels (null = auto)
+    interpolator: linear              # Interpolator [linear, bspline, nearest]
+
+# Segmentation settings
+segmentation:
+  method: auto                        # Segmentation method [auto, deep_learning, atlas]
+  
+  # Tissue classes and their label values
+  tissues:
+    background: 0
+    air: 1
+    soft_tissue: 2
+    bone: 3
+    fat: 4
+    csf: 5
+    
+  # Head region specific settings
+  head:
+    model_path: models/segmentation/head_segmentation_model.h5
+    labels:
+      background: 0
+      air: 1
+      brain: 2
+      skull: 3
+      soft_tissue: 4
+      fat: 5
+      csf: 6
+  
+  # Pelvis region specific settings
+  pelvis:
+    model_path: models/segmentation/pelvis_segmentation_model.h5
+    labels:
+      background: 0
+      air: 1
+      soft_tissue: 2
+      bone: 3
+      fat: 4
+  
+  # Thorax region specific settings
+  thorax:
+    model_path: models/segmentation/thorax_segmentation_model.h5
+    labels:
+      background: 0
+      air: 1
+      lung: 2
+      bone: 3
+      soft_tissue: 4
+      fat: 5
+      heart: 6
+  
+  # Atlas-based segmentation parameters  
+  atlas:
+    head_atlas_path: models/atlas/head_segmentation_atlas.h5
+    pelvis_atlas_path: models/atlas/pelvis_segmentation_atlas.h5
+    thorax_atlas_path: models/atlas/thorax_segmentation_atlas.h5
+    registration_method: affine       # Registration method for atlas alignment
+    label_fusion: majority            # Label fusion method [majority, staple]
+  
+  # Deep learning segmentation parameters
+  deep_learning:
+    architecture: unet                # Neural network architecture [unet, segnet]
+    input_shape: [256, 256, 96]       # Input shape for the network
+    batch_size: 1                     # Batch size for inference
+    use_patch: true                   # Use patch-based inference for large volumes
+    patch_size: [128, 128, 32]        # Patch size for inference
+    overlap: 0.5                      # Overlap between patches
+    threshold: 0.5                    # Threshold for binary segmentation
+
+# Conversion settings - to generate synthetic CT from MRI
+conversion:
+  default_method: gan                 # Default conversion method [atlas, cnn, gan]
+  default_region: head                # Default anatomical region [head, pelvis, thorax]
+  
+  # Atlas-based conversion parameters
+  atlas:
+    head:
+      atlas_path: models/atlas/head_ct_atlas.h5
+      registration_params:
+        method: deformable            # Registration method [rigid, affine, deformable]
+        metric: mutual_information    # Similarity metric
+        sampling_percentage: 0.1      # Percentage of voxels to sample
+      hu_values:
+        air: [-1000, -950]            # HU range for air
+        soft_tissue: [0, 100]         # HU range for soft tissue
+        bone: [200, 1500]             # HU range for bone
+        fat: [-120, -80]              # HU range for fat
+        csf: [0, 30]                  # HU range for cerebrospinal fluid
+      
+    pelvis:
+      atlas_path: models/atlas/pelvis_ct_atlas.h5
+      registration_params:
+        method: deformable
+        metric: mutual_information
+        sampling_percentage: 0.1
+      hu_values:
+        air: [-1000, -950]
+        soft_tissue: [0, 100]
+        bone: [200, 1500]
+        fat: [-120, -80]
+    
+    thorax:
+      atlas_path: models/atlas/thorax_ct_atlas.h5
+      registration_params:
+        method: deformable
+        metric: mutual_information
+        sampling_percentage: 0.1
+      hu_values:
+        air: [-1000, -950]
+        lung: [-950, -700]
+        soft_tissue: [0, 100]
+        bone: [200, 1500]
+        fat: [-120, -80]
+  
+  # CNN-based conversion parameters
+  cnn:
+    head:
+      model_path: models/cnn/head_cnn_model.h5
+      patch_size: [64, 64, 64]        # Patch size for 3D CNN
+      stride: [32, 32, 32]            # Stride for patch extraction
+      batch_size: 4                   # Batch size for inference
+      normalization: z-score          # Normalization method for input [z-score, minmax]
+    
+    pelvis:
+      model_path: models/cnn/pelvis_cnn_model.h5
+      patch_size: [64, 64, 64]
+      stride: [32, 32, 32]
+      batch_size: 4
+      normalization: z-score
+    
+    thorax:
+      model_path: models/cnn/thorax_cnn_model.h5
+      patch_size: [64, 64, 64]
+      stride: [32, 32, 32]
+      batch_size: 4
+      normalization: z-score
+  
+  # GAN-based conversion parameters
+  gan:
+    head:
+      generator_path: models/gan/head_gan_generator.h5
+      discriminator_path: models/gan/head_gan_discriminator.h5
+      batch_size: 1                   # Batch size for inference
+      input_shape: [256, 256, 1]      # Input shape for 2D GAN (slice-by-slice)
+      use_3d: false                   # Use 3D GAN (true) or 2D slice-by-slice (false)
+      patch_size: [256, 256, 32]      # Patch size for 3D GAN
+      stride: [128, 128, 16]          # Stride for 3D GAN
+    
+    pelvis:
+      generator_path: models/gan/pelvis_gan_generator.h5
+      discriminator_path: models/gan/pelvis_gan_discriminator.h5
+      batch_size: 1
+      input_shape: [256, 256, 1]
+      use_3d: false
+      patch_size: [256, 256, 32]
+      stride: [128, 128, 16]
+    
+    thorax:
+      generator_path: models/gan/thorax_gan_generator.h5
+      discriminator_path: models/gan/thorax_gan_discriminator.h5
+      batch_size: 1
+      input_shape: [256, 256, 1]
+      use_3d: false
+      patch_size: [256, 256, 32]
+      stride: [128, 128, 16]
+
+# Evaluation settings - to evaluate synthetic CT quality
+evaluation:
+  reference_required: true            # Whether reference CT is required for evaluation
+  metrics:
+    - mae                             # Mean absolute error (HU)
+    - mse                             # Mean squared error (HU²)
+    - psnr                            # Peak signal-to-noise ratio (dB)
+    - ssim                            # Structural similarity index
+    - dvh                             # Dose-volume histogram comparison
+  
+  regions:
+    - all                             # Evaluate on entire image
+    - bone                            # Evaluate on bone regions only
+    - soft_tissue                     # Evaluate on soft tissue regions only
+    - air                             # Evaluate on air regions only
+  
+  dose_calculation:
+    enable: false                     # Enable dose calculation comparison
+    method: monte_carlo               # Dose calculation method [monte_carlo, pencil_beam]
+    beam_arrangements:
+      - angles: [0, 90, 180, 270]     # Beam angles for dose calculation
+        energy: 6                     # Beam energy in MV
+        isocenter: auto               # Isocenter (auto = center of mass of target)
+    target_name: target               # Name of target structure for planning
+    oars:                             # Organs at risk
+      - brain
+      - brainstem
+      - spinal_cord
+      - parotid
+      - eyes
+  
+  reporting:
+    generate_pdf: true                # Generate PDF report
+    save_figures: true                # Save figures
+    include_dvh: true                 # Include DVH comparison in report
+    include_gamma: true               # Include gamma analysis in report
+
+# GUI settings
+gui:
+  theme: system                       # GUI theme [light, dark, system]
+  font_size: 10                       # Font size
+  window_size: [1200, 800]            # Window size [width, height]
+  
+  display:
+    default_window_level:             # Default window level settings for display
+      mri: [500, 1000]                # [window width, window center] for MRI
+      ct: [400, 40]                   # [window width, window center] for CT
+    
+    colormaps:
+      mri: gray                       # Default colormap for MRI
+      ct: gray                        # Default colormap for CT
+      difference: RdBu_r              # Default colormap for difference maps
+    
+    layouts:
+      default: side_by_side           # Default layout [side_by_side, overlay, grid]
+      views: [axial, coronal, sagittal]  # Default views to display 
