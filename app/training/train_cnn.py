@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+
 """
 Training script for CNN-based MRI to synthetic CT conversion model.
 This script handles dataset preparation, model definition, training, and validation.

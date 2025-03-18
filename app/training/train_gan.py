@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+
 """
 Training script for GAN-based MRI to synthetic CT conversion model.
 This script handles dataset preparation, generator and discriminator model definition,

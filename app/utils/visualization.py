@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+
 """
-Visualization utilities for medical images
+Visualization utilities for MRI to CT conversion.
 """
 
 import os
@@ -14,782 +15,591 @@ from matplotlib.widgets import Slider, Button
 import SimpleITK as sitk
 from pathlib import Path
 from typing import Dict, List, Tuple, Union, Optional, Any
+from matplotlib.colors import LinearSegmentedColormap
 
-from app.utils.io_utils import SyntheticCT
+from app.utils.io_utils import SyntheticCT, load_medical_image
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
+# Định nghĩa các giá trị window/level mặc định cho hiển thị
+DEFAULT_WINDOW_LEVEL = {
+    'mri': {'width': 500, 'level': 250},  # Window/level for MRI
+    'ct': {'width': 400, 'level': 40},    # Window/level for CT (soft tissue)
+    'ct_bone': {'width': 1800, 'level': 400},  # Window/level for CT (bone)
+    'ct_lung': {'width': 1500, 'level': -600}  # Window/level for CT (lung)
+}
 
-def plot_image_slice(image, slice_idx=None, axis=0, cmap='gray', 
-                   window_center=None, window_width=None, title=None):
+# Định nghĩa các colormap
+COLORMAPS = {
+    'mri': 'gray',
+    'ct': 'gray',
+    'difference': 'RdBu_r',
+    'segmentation': None  # Sẽ được tạo riêng
+}
+
+
+def get_slice_idx(image, orientation='axial', position=0.5):
     """
-    Plot a single slice from a 3D medical image.
+    Get slice index for a given position along an orientation.
     
     Args:
         image: SimpleITK image or numpy array
-        slice_idx: Index of the slice to display (default: middle slice)
-        axis: Axis along which to slice (0=sagittal, 1=coronal, 2=axial)
-        cmap: Colormap for display
-        window_center: Window center for display (default: auto)
-        window_width: Window width for display (default: auto)
-        title: Plot title
+        orientation: 'axial', 'coronal', or 'sagittal'
+        position: Relative position (0.0 to 1.0) along the axis
         
     Returns:
-        matplotlib figure
+        Slice index
     """
-    # Convert SimpleITK image to numpy if needed
+    # Convert SimpleITK image to numpy array if needed
     if isinstance(image, sitk.Image):
         array = sitk.GetArrayFromImage(image)
-        spacing = image.GetSpacing()
     else:
         array = image
-        spacing = [1.0, 1.0, 1.0]
     
-    # Get array dimensions and set default slice if not specified
-    if slice_idx is None:
-        slice_idx = array.shape[axis] // 2
+    # Get axis based on orientation
+    axis = orientation_to_axis(orientation)
     
-    # Get slice based on axis
-    if axis == 0:
-        slice_data = array[slice_idx, :, :]
-        aspect_ratio = spacing[2] / spacing[1]
-    elif axis == 1:
-        slice_data = array[:, slice_idx, :]
-        aspect_ratio = spacing[2] / spacing[0]
-    else:  # axis == 2
-        slice_data = array[:, :, slice_idx]
-        aspect_ratio = spacing[1] / spacing[0]
+    # Calculate slice index
+    n_slices = array.shape[axis]
+    slice_idx = int(position * n_slices)
     
-    # Set window level if not provided
-    if window_center is None or window_width is None:
-        min_val = np.min(slice_data)
-        max_val = np.max(slice_data)
-        if window_center is None:
-            window_center = (max_val + min_val) / 2
-        if window_width is None:
-            window_width = max_val - min_val
+    # Ensure valid slice index
+    slice_idx = max(0, min(slice_idx, n_slices - 1))
     
-    # Create figure
-    fig, ax = plt.subplots(figsize=(8, 8))
-    
-    # Display slice with window level
-    vmin = window_center - window_width / 2
-    vmax = window_center + window_width / 2
-    im = ax.imshow(slice_data, cmap=cmap, vmin=vmin, vmax=vmax, aspect=aspect_ratio)
-    
-    # Add colorbar
-    plt.colorbar(im, ax=ax, label='Intensity')
-    
-    # Set title
-    if title:
-        ax.set_title(title)
-    else:
-        ax_names = ['Sagittal', 'Coronal', 'Axial']
-        ax.set_title(f"{ax_names[axis]} view - Slice {slice_idx}")
-    
-    # Display grid
-    ax.grid(False)
-    
-    return fig
+    return slice_idx
 
 
-def plot_comparison(image1, image2, slice_idx=None, axis=0, cmap='gray', 
-                   window_center=None, window_width=None, titles=None):
+def orientation_to_axis(orientation):
     """
-    Plot comparison of two 3D medical images.
+    Convert orientation to axis index.
     
     Args:
-        image1: First SimpleITK image or numpy array
-        image2: Second SimpleITK image or numpy array
-        slice_idx: Index of the slice to display (default: middle slice)
-        axis: Axis along which to slice (0=sagittal, 1=coronal, 2=axial)
-        cmap: Colormap for display
-        window_center: Window center for display (default: auto)
-        window_width: Window width for display (default: auto)
-        titles: Titles for the two images (default: ['Image 1', 'Image 2'])
+        orientation: 'axial', 'coronal', or 'sagittal'
         
     Returns:
-        matplotlib figure
+        Axis index (0, 1, or 2)
     """
-    # Convert SimpleITK images to numpy if needed
-    if isinstance(image1, sitk.Image):
-        array1 = sitk.GetArrayFromImage(image1)
-        spacing1 = image1.GetSpacing()
+    orientation = orientation.lower()
+    if orientation == 'axial':
+        return 0  # Z-axis
+    elif orientation == 'coronal':
+        return 1  # Y-axis
+    elif orientation == 'sagittal':
+        return 2  # X-axis
     else:
-        array1 = image1
-        spacing1 = [1.0, 1.0, 1.0]
-    
-    if isinstance(image2, sitk.Image):
-        array2 = sitk.GetArrayFromImage(image2)
-        spacing2 = image2.GetSpacing()
-    else:
-        array2 = image2
-        spacing2 = [1.0, 1.0, 1.0]
-    
-    # Check if arrays have the same shape
-    if array1.shape != array2.shape:
-        raise ValueError(f"Images have different shapes: {array1.shape} vs {array2.shape}")
-    
-    # Get array dimensions and set default slice if not specified
-    if slice_idx is None:
-        slice_idx = array1.shape[axis] // 2
-    
-    # Get slices based on axis
-    if axis == 0:
-        slice_data1 = array1[slice_idx, :, :]
-        slice_data2 = array2[slice_idx, :, :]
-        aspect_ratio = spacing1[2] / spacing1[1]
-    elif axis == 1:
-        slice_data1 = array1[:, slice_idx, :]
-        slice_data2 = array2[:, slice_idx, :]
-        aspect_ratio = spacing1[2] / spacing1[0]
-    else:  # axis == 2
-        slice_data1 = array1[:, :, slice_idx]
-        slice_data2 = array2[:, :, slice_idx]
-        aspect_ratio = spacing1[1] / spacing1[0]
-    
-    # Set window level if not provided
-    if window_center is None or window_width is None:
-        min_val = min(np.min(slice_data1), np.min(slice_data2))
-        max_val = max(np.max(slice_data1), np.max(slice_data2))
-        if window_center is None:
-            window_center = (max_val + min_val) / 2
-        if window_width is None:
-            window_width = max_val - min_val
-    
-    # Create figure
-    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-    
-    # Display slices with window level
-    vmin = window_center - window_width / 2
-    vmax = window_center + window_width / 2
-    
-    im1 = axes[0].imshow(slice_data1, cmap=cmap, vmin=vmin, vmax=vmax, aspect=aspect_ratio)
-    im2 = axes[1].imshow(slice_data2, cmap=cmap, vmin=vmin, vmax=vmax, aspect=aspect_ratio)
-    
-    # Add colorbar
-    plt.colorbar(im1, ax=axes[0], label='Intensity')
-    plt.colorbar(im2, ax=axes[1], label='Intensity')
-    
-    # Set titles
-    if titles is None:
-        titles = ['Image 1', 'Image 2']
-    
-    ax_names = ['Sagittal', 'Coronal', 'Axial']
-    axes[0].set_title(f"{titles[0]} - {ax_names[axis]} view - Slice {slice_idx}")
-    axes[1].set_title(f"{titles[1]} - {ax_names[axis]} view - Slice {slice_idx}")
-    
-    # Display grid
-    axes[0].grid(False)
-    axes[1].grid(False)
-    
-    # Add global title
-    plt.suptitle(f"Comparison - {ax_names[axis]} view - Slice {slice_idx}")
-    
-    plt.tight_layout()
-    
-    return fig
+        raise ValueError(f"Unsupported orientation: {orientation}")
 
 
-def plot_difference(image1, image2, slice_idx=None, axis=0, cmap='RdBu_r', 
-                   window_center=0, window_width=None, title=None):
+def apply_window_level(data, window=None, level=None, data_type='ct'):
     """
-    Plot difference between two 3D medical images.
+    Apply window/level to image data.
     
     Args:
-        image1: First SimpleITK image or numpy array
-        image2: Second SimpleITK image or numpy array
-        slice_idx: Index of the slice to display (default: middle slice)
-        axis: Axis along which to slice (0=sagittal, 1=coronal, 2=axial)
-        cmap: Colormap for display (default: red-blue for differences)
-        window_center: Window center for display (default: 0 for difference)
-        window_width: Window width for display (default: auto)
-        title: Plot title
+        data: Image data as numpy array
+        window: Window width (range of values to display)
+        level: Window level (center of the window)
+        data_type: Type of data ('ct', 'mri', 'segmentation')
         
     Returns:
-        matplotlib figure
+        Windowed data normalized to [0, 1]
     """
-    # Convert SimpleITK images to numpy if needed
-    if isinstance(image1, sitk.Image):
-        array1 = sitk.GetArrayFromImage(image1)
-        spacing = image1.GetSpacing()
-    else:
-        array1 = image1
-        spacing = [1.0, 1.0, 1.0]
+    # Set default window/level based on data type
+    if window is None or level is None:
+        if data_type == 'ct':
+            window = 500  # HU
+            level = 50    # HU
+        elif data_type == 'mri':
+            window = np.max(data) - np.min(data)
+            level = (np.max(data) + np.min(data)) / 2
+        elif data_type == 'segmentation':
+            return data  # No windowing for segmentation
     
-    if isinstance(image2, sitk.Image):
-        array2 = sitk.GetArrayFromImage(image2)
-    else:
-        array2 = image2
+    # Apply window/level
+    data_windowed = np.clip(data, level - window/2, level + window/2)
     
-    # Check if arrays have the same shape
-    if array1.shape != array2.shape:
-        raise ValueError(f"Images have different shapes: {array1.shape} vs {array2.shape}")
+    # Normalize to [0, 1]
+    data_normalized = (data_windowed - (level - window/2)) / window
     
-    # Calculate difference
-    diff_array = array1 - array2
-    
-    # Get array dimensions and set default slice if not specified
-    if slice_idx is None:
-        slice_idx = diff_array.shape[axis] // 2
-    
-    # Get slice based on axis
-    if axis == 0:
-        slice_data = diff_array[slice_idx, :, :]
-        aspect_ratio = spacing[2] / spacing[1]
-    elif axis == 1:
-        slice_data = diff_array[:, slice_idx, :]
-        aspect_ratio = spacing[2] / spacing[0]
-    else:  # axis == 2
-        slice_data = diff_array[:, :, slice_idx]
-        aspect_ratio = spacing[1] / spacing[0]
-    
-    # Set window width if not provided
-    if window_width is None:
-        max_abs_diff = np.max(np.abs(slice_data))
-        window_width = 2 * max_abs_diff
-    
-    # Create figure
-    fig, ax = plt.subplots(figsize=(10, 8))
-    
-    # Display difference with symmetric colormap around zero
-    vmin = window_center - window_width / 2
-    vmax = window_center + window_width / 2
-    
-    im = ax.imshow(slice_data, cmap=cmap, vmin=vmin, vmax=vmax, aspect=aspect_ratio)
-    
-    # Add colorbar
-    cbar = plt.colorbar(im, ax=ax, label='Difference')
-    
-    # Set title
-    if title:
-        ax.set_title(title)
-    else:
-        ax_names = ['Sagittal', 'Coronal', 'Axial']
-        ax.set_title(f"Difference - {ax_names[axis]} view - Slice {slice_idx}")
-    
-    # Calculate statistics
-    mean_diff = np.mean(diff_array)
-    std_diff = np.std(diff_array)
-    max_diff = np.max(diff_array)
-    min_diff = np.min(diff_array)
-    mae = np.mean(np.abs(diff_array))
-    
-    # Add statistics as text
-    stats_text = (
-        f"Mean: {mean_diff:.2f}\n"
-        f"Std: {std_diff:.2f}\n"
-        f"Min: {min_diff:.2f}\n"
-        f"Max: {max_diff:.2f}\n"
-        f"MAE: {mae:.2f}"
-    )
-    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
-            verticalalignment='top', bbox=dict(boxstyle='round', alpha=0.5))
-    
-    # Display grid
-    ax.grid(False)
-    
-    return fig
+    return data_normalized
 
 
-def create_interactive_viewer(image, axis=0, cmap='gray', window_center=None, window_width=None, title=None):
+def create_segmentation_colormap(num_classes):
     """
-    Create an interactive slice viewer for a 3D medical image.
+    Create a colormap for segmentation visualization.
     
     Args:
-        image: SimpleITK image or numpy array
-        axis: Initial axis along which to slice (0=sagittal, 1=coronal, 2=axial)
-        cmap: Colormap for display
-        window_center: Initial window center for display (default: auto)
-        window_width: Initial window width for display (default: auto)
-        title: Plot title
+        num_classes: Number of segmentation classes
         
     Returns:
-        matplotlib figure
+        Matplotlib colormap
     """
-    # Convert SimpleITK image to numpy if needed
-    if isinstance(image, sitk.Image):
-        array = sitk.GetArrayFromImage(image)
-        spacing = image.GetSpacing()
-    else:
-        array = image
-        spacing = [1.0, 1.0, 1.0]
+    import matplotlib.colors as mcolors
     
-    # Set default window level if not provided
-    if window_center is None:
-        window_center = (np.max(array) + np.min(array)) / 2
-    if window_width is None:
-        window_width = np.max(array) - np.min(array)
-    
-    # Calculate aspect ratio based on spacing
-    aspect_ratios = [
-        spacing[2] / spacing[1],  # Sagittal
-        spacing[2] / spacing[0],  # Coronal
-        spacing[1] / spacing[0]   # Axial
+    # Define base colors (excluding background which is transparent)
+    base_colors = [
+        [0, 0, 0, 0],       # Background (transparent)
+        [1, 0, 0, 0.7],     # Class 1 (red)
+        [0, 1, 0, 0.7],     # Class 2 (green)
+        [0, 0, 1, 0.7],     # Class 3 (blue)
+        [1, 1, 0, 0.7],     # Class 4 (yellow)
+        [1, 0, 1, 0.7],     # Class 5 (magenta)
+        [0, 1, 1, 0.7],     # Class 6 (cyan)
+        [1, 0.5, 0, 0.7],   # Class 7 (orange)
+        [0.5, 0, 1, 0.7],   # Class 8 (purple)
+        [0, 0.5, 0, 0.7],   # Class 9 (dark green)
+        [0.5, 0.5, 0.5, 0.7] # Class 10 (gray)
     ]
     
-    # Create figure and initial plot
-    fig, ax = plt.subplots(figsize=(10, 8))
-    plt.subplots_adjust(bottom=0.25)
+    # Extend colors if needed
+    if num_classes > len(base_colors):
+        import colorsys
+        
+        for i in range(len(base_colors), num_classes):
+            # Generate evenly spaced HSV colors and convert to RGB
+            h = (i - len(base_colors)) / (num_classes - len(base_colors))
+            r, g, b = colorsys.hsv_to_rgb(h, 0.8, 0.8)
+            base_colors.append([r, g, b, 0.7])
     
-    # Get initial slice based on axis
-    slice_idx = array.shape[axis] // 2
+    # Create colormap
+    cmap = mcolors.ListedColormap(base_colors[:num_classes])
     
-    if axis == 0:
+    return cmap
+
+
+def extract_slice(image, orientation='axial', slice_idx=None, position=0.5):
+    """
+    Extract a 2D slice from a 3D volume.
+    
+    Args:
+        image: SimpleITK image or numpy array
+        orientation: 'axial', 'coronal', or 'sagittal'
+        slice_idx: Slice index (if None, use position)
+        position: Relative position (0.0 to 1.0) along the axis
+        
+    Returns:
+        2D slice as numpy array
+    """
+    # Convert SimpleITK image to numpy array if needed
+    if isinstance(image, sitk.Image):
+        array = sitk.GetArrayFromImage(image)
+    else:
+        array = image
+    
+    # Get axis based on orientation
+    axis = orientation_to_axis(orientation)
+    
+    # Get slice index if not provided
+    if slice_idx is None:
+        slice_idx = get_slice_idx(array, orientation, position)
+    
+    # Extract slice
+    if axis == 0:  # Axial
         slice_data = array[slice_idx, :, :]
-    elif axis == 1:
+    elif axis == 1:  # Coronal
         slice_data = array[:, slice_idx, :]
-    else:  # axis == 2
+    elif axis == 2:  # Sagittal
         slice_data = array[:, :, slice_idx]
     
-    # Display initial slice
-    vmin = window_center - window_width / 2
-    vmax = window_center + window_width / 2
-    im = ax.imshow(slice_data, cmap=cmap, vmin=vmin, vmax=vmax, aspect=aspect_ratios[axis])
-    
-    # Add colorbar
-    cbar = plt.colorbar(im, ax=ax, label='Intensity')
-    
-    # Set title
-    ax_names = ['Sagittal', 'Coronal', 'Axial']
-    if title:
-        ax.set_title(f"{title} - {ax_names[axis]} view - Slice {slice_idx}")
-    else:
-        ax.set_title(f"{ax_names[axis]} view - Slice {slice_idx}")
-    
-    # Create axes for slice slider
-    ax_slice = plt.axes([0.25, 0.1, 0.65, 0.03])
-    slider_slice = Slider(
-        ax=ax_slice,
-        label='Slice',
-        valmin=0,
-        valmax=array.shape[axis] - 1,
-        valinit=slice_idx,
-        valstep=1
-    )
-    
-    # Create axes for window level sliders
-    ax_center = plt.axes([0.25, 0.15, 0.65, 0.03])
-    ax_width = plt.axes([0.25, 0.05, 0.65, 0.03])
-    
-    # Create window level sliders
-    data_min = np.min(array)
-    data_max = np.max(array)
-    data_range = data_max - data_min
-    
-    slider_center = Slider(
-        ax=ax_center,
-        label='Window Center',
-        valmin=data_min,
-        valmax=data_max,
-        valinit=window_center
-    )
-    
-    slider_width = Slider(
-        ax=ax_width,
-        label='Window Width',
-        valmin=0,
-        valmax=data_range * 2,
-        valinit=window_width
-    )
-    
-    # Create axes for axis selection buttons
-    btn_axes = []
-    for i in range(3):
-        btn_axes.append(plt.axes([0.05 + i * 0.05, 0.1, 0.04, 0.04]))
-    
-    # Create axis selection buttons
-    buttons = [Button(ax, label) for ax, label in zip(btn_axes, ['S', 'C', 'A'])]
-    
-    # Create update function for sliders and buttons
-    def update(val):
-        # Get current values
-        current_slice = int(slider_slice.val)
-        current_center = slider_center.val
-        current_width = slider_width.val
-        
-        # Get slice data based on current axis
-        nonlocal axis
-        if axis == 0:
-            slice_data = array[current_slice, :, :]
-        elif axis == 1:
-            slice_data = array[:, current_slice, :]
-        else:  # axis == 2
-            slice_data = array[:, :, current_slice]
-        
-        # Update image
-        vmin = current_center - current_width / 2
-        vmax = current_center + current_width / 2
-        im.set_data(slice_data)
-        im.set_clim(vmin, vmax)
-        
-        # Update title
-        if title:
-            ax.set_title(f"{title} - {ax_names[axis]} view - Slice {current_slice}")
-        else:
-            ax.set_title(f"{ax_names[axis]} view - Slice {current_slice}")
-        
-        fig.canvas.draw_idle()
-    
-    # Create function to handle axis button clicks
-    def change_axis(event):
-        nonlocal axis
-        if event.inaxes == btn_axes[0]:
-            new_axis = 0  # Sagittal
-        elif event.inaxes == btn_axes[1]:
-            new_axis = 1  # Coronal
-        else:
-            new_axis = 2  # Axial
-        
-        if new_axis != axis:
-            axis = new_axis
-            
-            # Update slider range
-            slider_slice.valmax = array.shape[axis] - 1
-            slider_slice.ax.set_xlim(0, array.shape[axis] - 1)
-            slider_slice.set_val(array.shape[axis] // 2)
-            
-            # Update aspect ratio
-            im.set_aspect(aspect_ratios[axis])
-            
-            # Update display
-            update(None)
-    
-    # Register callbacks
-    slider_slice.on_changed(update)
-    slider_center.on_changed(update)
-    slider_width.on_changed(update)
-    
-    for button in buttons:
-        button.on_clicked(change_axis)
-    
-    # Store sliders and buttons in figure to prevent garbage collection
-    fig.sliders = [slider_slice, slider_center, slider_width]
-    fig.buttons = buttons
-    
-    return fig
+    return slice_data
 
 
-def save_comparison_figure(image1, image2, output_path, slice_idx=None, axis=0, cmap='gray',
-                          window_center=None, window_width=None, titles=None, dpi=300):
+def plot_slice(image_path, output_path=None, orientation='axial', slice_idx=None, position=0.5, 
+              title=None, window=None, level=None, cmap=None, 
+              data_type='ct', alpha=1.0, figsize=(8, 8), dpi=150):
     """
-    Create and save a comparison figure of two 3D medical images.
+    Plot a 2D slice from a 3D volume.
     
     Args:
-        image1: First SimpleITK image or numpy array
-        image2: Second SimpleITK image or numpy array
-        output_path: Path to save the figure
-        slice_idx: Index of the slice to display (default: middle slice)
-        axis: Axis along which to slice (0=sagittal, 1=coronal, 2=axial)
-        cmap: Colormap for display
-        window_center: Window center for display (default: auto)
-        window_width: Window width for display (default: auto)
-        titles: Titles for the two images (default: ['Image 1', 'Image 2'])
-        dpi: DPI for the output figure
-        
-    Returns:
-        Path to the saved figure
-    """
-    # Create comparison figure
-    fig = plot_comparison(
-        image1, image2, 
-        slice_idx=slice_idx, 
-        axis=axis, 
-        cmap=cmap, 
-        window_center=window_center, 
-        window_width=window_width, 
-        titles=titles
-    )
-    
-    # Create difference figure
-    diff_fig = plot_difference(
-        image1, image2, 
-        slice_idx=slice_idx, 
-        axis=axis
-    )
-    
-    # Create directory if it doesn't exist
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    # Save comparison figure
-    fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
-    plt.close(fig)
-    
-    # Save difference figure
-    diff_path = os.path.splitext(output_path)[0] + '_diff' + os.path.splitext(output_path)[1]
-    diff_fig.savefig(diff_path, dpi=dpi, bbox_inches='tight')
-    plt.close(diff_fig)
-    
-    logger.info(f"Saved comparison figure to {output_path}")
-    logger.info(f"Saved difference figure to {diff_path}")
-    
-    return output_path
-
-
-def create_montage(image, n_slices=9, axis=0, cmap='gray', window_center=None, window_width=None, title=None):
-    """
-    Create a montage of slices from a 3D medical image.
-    
-    Args:
-        image: SimpleITK image or numpy array
-        n_slices: Number of slices to include in the montage
-        axis: Axis along which to slice (0=sagittal, 1=coronal, 2=axial)
-        cmap: Colormap for display
-        window_center: Window center for display (default: auto)
-        window_width: Window width for display (default: auto)
+        image_path: Path to the image file or SimpleITK image
+        output_path: Path to save the plot (None to display)
+        orientation: 'axial', 'coronal', or 'sagittal'
+        slice_idx: Slice index (if None, use position)
+        position: Relative position (0.0 to 1.0) along the axis
         title: Plot title
+        window: Window width for visualization
+        level: Window level for visualization
+        cmap: Colormap (None for default based on data_type)
+        data_type: Type of data ('ct', 'mri', 'segmentation')
+        alpha: Transparency level
+        figsize: Figure size in inches
+        dpi: Resolution in dots per inch
         
     Returns:
-        matplotlib figure
+        Figure and axes objects
     """
-    # Convert SimpleITK image to numpy if needed
-    if isinstance(image, sitk.Image):
-        array = sitk.GetArrayFromImage(image)
-        spacing = image.GetSpacing()
+    # Load image if path is provided
+    if isinstance(image_path, str) or isinstance(image_path, Path):
+        image = load_medical_image(image_path)
     else:
-        array = image
-        spacing = [1.0, 1.0, 1.0]
+        image = image_path
     
-    # Get aspect ratio based on spacing
-    if axis == 0:
-        aspect_ratio = spacing[2] / spacing[1]
-    elif axis == 1:
-        aspect_ratio = spacing[2] / spacing[0]
-    else:  # axis == 2
-        aspect_ratio = spacing[1] / spacing[0]
+    # Extract slice
+    slice_data = extract_slice(image, orientation, slice_idx, position)
     
-    # Determine grid layout
-    grid_size = int(np.ceil(np.sqrt(n_slices)))
+    # Apply window/level if needed
+    if data_type != 'segmentation':
+        slice_data = apply_window_level(slice_data, window, level, data_type)
     
-    # Calculate slice indices
-    slice_count = array.shape[axis]
-    if n_slices > slice_count:
-        n_slices = slice_count
-        logger.warning(f"Reduced number of slices to {n_slices} (total available)")
+    # Set colormap based on data type if not provided
+    if cmap is None:
+        if data_type == 'ct':
+            cmap = 'gray'
+        elif data_type == 'mri':
+            cmap = 'gray'
+        elif data_type == 'segmentation':
+            # Count unique values for segmentation
+            num_classes = len(np.unique(slice_data))
+            cmap = create_segmentation_colormap(num_classes)
     
-    # Select evenly spaced slices
-    if slice_count <= n_slices:
-        indices = list(range(slice_count))
+    # Create figure and plot
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    if data_type == 'segmentation':
+        # Plot segmentation with discrete values
+        im = ax.imshow(slice_data, cmap=cmap, interpolation='nearest', alpha=alpha)
     else:
-        step = slice_count / n_slices
-        indices = [int(i * step) for i in range(n_slices)]
+        # Plot medical image
+        im = ax.imshow(slice_data, cmap=cmap, alpha=alpha)
     
-    # Set window level if not provided
-    if window_center is None or window_width is None:
-        min_val = np.min(array)
-        max_val = np.max(array)
-        if window_center is None:
-            window_center = (max_val + min_val) / 2
-        if window_width is None:
-            window_width = max_val - min_val
-    
-    # Create figure
-    fig, axes = plt.subplots(grid_size, grid_size, figsize=(15, 15))
-    
-    # Flatten axes for easy iteration
-    axes = axes.flatten()
-    
-    # Display slices
-    vmin = window_center - window_width / 2
-    vmax = window_center + window_width / 2
-    
-    for i, slice_idx in enumerate(indices):
-        if i >= len(axes):
-            break
-            
-        if axis == 0:
-            slice_data = array[slice_idx, :, :]
-        elif axis == 1:
-            slice_data = array[:, slice_idx, :]
-        else:  # axis == 2
-            slice_data = array[:, :, slice_idx]
-        
-        im = axes[i].imshow(slice_data, cmap=cmap, vmin=vmin, vmax=vmax, aspect=aspect_ratio)
-        axes[i].set_title(f"Slice {slice_idx}")
-        axes[i].axis('off')
-    
-    # Hide unused subplots
-    for i in range(n_slices, len(axes)):
-        axes[i].axis('off')
-    
-    # Add colorbar
-    cb_ax = fig.add_axes([0.92, 0.1, 0.02, 0.8])
-    plt.colorbar(im, cax=cb_ax, label='Intensity')
-    
-    # Set global title
-    ax_names = ['Sagittal', 'Coronal', 'Axial']
-    if title:
-        plt.suptitle(f"{title} - {ax_names[axis]} view Montage")
-    else:
-        plt.suptitle(f"{ax_names[axis]} view Montage")
-    
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.92, right=0.9)
-    
-    return fig
-
-
-def plot_histogram(image, mask=None, bins=100, title=None):
-    """
-    Plot histogram of intensities in a medical image.
-    
-    Args:
-        image: SimpleITK image or numpy array
-        mask: Optional binary mask to select specific voxels
-        bins: Number of histogram bins
-        title: Plot title
-        
-    Returns:
-        matplotlib figure
-    """
-    # Convert SimpleITK image to numpy if needed
-    if isinstance(image, sitk.Image):
-        array = sitk.GetArrayFromImage(image)
-    else:
-        array = image
-    
-    # Apply mask if provided
-    if mask is not None:
-        if isinstance(mask, sitk.Image):
-            mask_array = sitk.GetArrayFromImage(mask)
-        else:
-            mask_array = mask
-        
-        # Ensure mask is binary
-        if not np.all(np.unique(mask_array) == np.array([0, 1])):
-            mask_array = (mask_array > 0).astype(int)
-        
-        # Apply mask
-        masked_array = array[mask_array > 0]
-    else:
-        masked_array = array.flatten()
-    
-    # Create figure
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Plot histogram
-    n, bins, patches = ax.hist(masked_array, bins=bins, alpha=0.7, color='blue')
-    
-    # Add vertical lines for key statistics
-    mean_val = np.mean(masked_array)
-    median_val = np.median(masked_array)
-    std_val = np.std(masked_array)
-    
-    ax.axvline(mean_val, color='red', linestyle='dashed', linewidth=1, label=f'Mean: {mean_val:.1f}')
-    ax.axvline(median_val, color='green', linestyle='dashed', linewidth=1, label=f'Median: {median_val:.1f}')
-    
-    # Add statistics as text
-    stats_text = (
-        f"Mean: {mean_val:.1f}\n"
-        f"Median: {median_val:.1f}\n"
-        f"Std: {std_val:.1f}\n"
-        f"Min: {np.min(masked_array):.1f}\n"
-        f"Max: {np.max(masked_array):.1f}\n"
-        f"Count: {len(masked_array)}"
-    )
-    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
-            verticalalignment='top', bbox=dict(boxstyle='round', alpha=0.5))
-    
-    # Set labels
-    ax.set_xlabel('Intensity')
-    ax.set_ylabel('Frequency')
-    
-    # Set title
+    # Add title if provided
     if title:
         ax.set_title(title)
+    
+    # Remove axes
+    ax.axis('off')
+    
+    # Add colorbar for segmentation
+    if data_type == 'segmentation':
+        plt.colorbar(im, ax=ax)
+    
+    # Save or display
+    if output_path:
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+        return output_path
     else:
-        ax.set_title('Intensity Histogram')
-    
-    ax.legend()
-    
-    plt.tight_layout()
-    
-    return fig
+        plt.tight_layout()
+        return fig, ax
 
 
-def plot_evaluation_results(metrics_dict, output_path=None, title="Evaluation Results"):
+def plot_comparison(mri, ct, segmentation=None, synthetic_ct=None, orientation='axial', 
+                   slice_idx=None, position=0.5, show_difference=True, figsize=(15, 10),
+                   output_path=None, dpi=150, window=None, level=None):
     """
-    Plot evaluation results for synthetic CT comparison.
+    Plot comparison of MRI, CT, synthetic CT, and segmentation.
     
     Args:
-        metrics_dict: Dictionary containing evaluation metrics
-        output_path: Optional path to save the figure
-        title: Plot title
+        mri: MRI image (SimpleITK image, numpy array, or path)
+        ct: CT image (SimpleITK image, numpy array, or path)
+        segmentation: Segmentation image (optional)
+        synthetic_ct: Synthetic CT image (optional)
+        orientation: 'axial', 'coronal', or 'sagittal'
+        slice_idx: Slice index (if None, use position)
+        position: Relative position (0.0 to 1.0) along the axis
+        show_difference: Whether to show difference between CT and synthetic CT
+        figsize: Figure size in inches
+        output_path: Path to save the plot (None to display)
+        dpi: Resolution in dots per inch
+        window: Window width for visualization
+        level: Window level for visualization
         
     Returns:
-        matplotlib figure
+        Figure and axes objects or output path
     """
-    # Extract metrics
-    metrics = metrics_dict.copy()
+    # Load images if paths are provided
+    if isinstance(mri, str) or isinstance(mri, Path):
+        mri = load_medical_image(mri)
     
-    # Handle different metric structures
-    if 'by_tissue' in metrics:
-        # Tissue-specific metrics
-        tissue_metrics = metrics.pop('by_tissue')
-        
-        # Create figure with subplots for overall and tissue-specific metrics
-        fig, axes = plt.subplots(1, 2, figsize=(15, 8))
-        
-        # Plot overall metrics
-        metrics_names = list(metrics.keys())
-        metrics_values = [metrics[m] for m in metrics_names]
-        
-        axes[0].bar(metrics_names, metrics_values, color='skyblue')
-        axes[0].set_title('Overall Metrics')
-        axes[0].set_ylabel('Value')
-        axes[0].grid(axis='y', linestyle='--', alpha=0.7)
-        
-        # Rotate x labels for readability
-        axes[0].set_xticklabels(metrics_names, rotation=45, ha='right')
-        
-        # Plot tissue-specific metrics
-        tissues = list(tissue_metrics.keys())
-        metric_types = ['mae', 'mse', 'psnr']  # Common metrics to plot
-        
-        # Prepare data for grouped bar chart
-        x = np.arange(len(tissues))
-        width = 0.25
-        
-        # Plot each metric type as a group
-        for i, metric in enumerate(metric_types):
-            if all(metric in tissue_metrics[t] for t in tissues):
-                values = [tissue_metrics[t][metric] for t in tissues]
-                axes[1].bar(x + (i - 1) * width, values, width, label=metric.upper())
-        
-        # Set axis labels and title
-        axes[1].set_xlabel('Tissue Type')
-        axes[1].set_ylabel('Value')
-        axes[1].set_title('Metrics by Tissue Type')
-        axes[1].set_xticks(x)
-        axes[1].set_xticklabels(tissues, rotation=45, ha='right')
-        axes[1].legend()
-        axes[1].grid(axis='y', linestyle='--', alpha=0.7)
-        
+    if isinstance(ct, str) or isinstance(ct, Path):
+        ct = load_medical_image(ct)
+    
+    if segmentation is not None and (isinstance(segmentation, str) or isinstance(segmentation, Path)):
+        segmentation = load_medical_image(segmentation)
+    
+    if synthetic_ct is not None and (isinstance(synthetic_ct, str) or isinstance(synthetic_ct, Path)):
+        synthetic_ct = load_medical_image(synthetic_ct)
+    
+    # Determine number of plots
+    n_plots = 2  # MRI and CT
+    if synthetic_ct is not None:
+        n_plots += 1  # Synthetic CT
+        if show_difference:
+            n_plots += 1  # Difference
+    
+    # Create figure and axes
+    if synthetic_ct is not None and show_difference:
+        fig, axes = plt.subplots(1, n_plots, figsize=figsize)
     else:
-        # Only overall metrics
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        metrics_names = list(metrics.keys())
-        metrics_values = [metrics[m] for m in metrics_names]
-        
-        ax.bar(metrics_names, metrics_values, color='skyblue')
-        ax.set_title('Evaluation Metrics')
-        ax.set_ylabel('Value')
-        ax.grid(axis='y', linestyle='--', alpha=0.7)
-        
-        # Rotate x labels for readability
-        ax.set_xticklabels(metrics_names, rotation=45, ha='right')
+        fig, axes = plt.subplots(1, n_plots, figsize=figsize)
     
-    # Set global title
-    plt.suptitle(title, fontsize=16)
+    # Extract slices
+    mri_slice = extract_slice(mri, orientation, slice_idx, position)
+    ct_slice = extract_slice(ct, orientation, slice_idx, position)
     
-    plt.tight_layout()
+    # Apply window/level to MRI and CT
+    mri_display = apply_window_level(mri_slice, window, level, 'mri')
+    ct_display = apply_window_level(ct_slice, window, level, 'ct')
     
-    # Save figure if output path is provided
+    # Plot MRI
+    axes[0].imshow(mri_display, cmap='gray')
+    axes[0].set_title('MRI')
+    axes[0].axis('off')
+    
+    # Plot CT
+    axes[1].imshow(ct_display, cmap='gray')
+    axes[1].set_title('Reference CT')
+    axes[1].axis('off')
+    
+    # Plot segmentation as overlay on MRI if provided
+    if segmentation is not None:
+        seg_slice = extract_slice(segmentation, orientation, slice_idx, position)
+        num_classes = len(np.unique(seg_slice))
+        seg_cmap = create_segmentation_colormap(num_classes)
+        axes[0].imshow(seg_slice, cmap=seg_cmap, alpha=0.5)
+    
+    # Plot synthetic CT if provided
+    if synthetic_ct is not None:
+        synth_slice = extract_slice(synthetic_ct, orientation, slice_idx, position)
+        synth_display = apply_window_level(synth_slice, window, level, 'ct')
+        
+        axes[2].imshow(synth_display, cmap='gray')
+        axes[2].set_title('Synthetic CT')
+        axes[2].axis('off')
+        
+        # Plot difference if requested
+        if show_difference:
+            diff_slice = synth_slice - ct_slice
+            diff_max = max(abs(np.percentile(diff_slice, 1)), abs(np.percentile(diff_slice, 99)))
+            im = axes[3].imshow(diff_slice, cmap='RdBu_r', vmin=-diff_max, vmax=diff_max)
+            axes[3].set_title('Difference')
+            axes[3].axis('off')
+            
+            # Add colorbar
+            plt.colorbar(im, ax=axes[3], label='HU Difference')
+    
+    # Save or display
     if output_path:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        fig.savefig(output_path, dpi=300, bbox_inches='tight')
-        logger.info(f"Saved evaluation results plot to {output_path}")
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+        return output_path
+    else:
+        plt.tight_layout()
+        return fig, axes
+
+
+def plot_3d_rendering(image_path, output_path=None, threshold=300, dpi=150):
+    """
+    Create a 3D surface rendering of a medical image.
     
-    return fig 
+    Args:
+        image_path: Path to the image file or SimpleITK image
+        output_path: Path to save the rendering (None to display)
+        threshold: HU threshold for rendering (default: 300 for bone)
+        dpi: Resolution in dots per inch
+        
+    Returns:
+        Figure object or output path
+    """
+    try:
+        # Import 3D visualization libraries
+        from skimage import measure
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        
+        # Load image
+        if isinstance(image_path, str) or isinstance(image_path, Path):
+            image = load_medical_image(image_path)
+        else:
+            image = image_path
+        
+        # Convert to numpy array
+        array = sitk.GetArrayFromImage(image)
+        
+        # Create 3D figure
+        fig = plt.figure(figsize=(10, 10))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Extract surface mesh at the given threshold value
+        verts, faces, _, _ = measure.marching_cubes(array, threshold)
+        
+        # Create mesh
+        mesh = Poly3DCollection(verts[faces], alpha=0.7)
+        mesh.set_edgecolor('k')
+        
+        # Add mesh to plot
+        ax.add_collection3d(mesh)
+        
+        # Set axis limits
+        ax.set_xlim(0, array.shape[0])
+        ax.set_ylim(0, array.shape[1])
+        ax.set_zlim(0, array.shape[2])
+        
+        # Set labels
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        
+        # Set title
+        ax.set_title(f'3D Rendering (Threshold: {threshold} HU)')
+        
+        # Save or display
+        if output_path:
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
+            plt.close(fig)
+            return output_path
+        else:
+            return fig
+            
+    except ImportError as e:
+        logger.error(f"Required libraries for 3D rendering not found: {str(e)}")
+        raise ImportError("Required libraries for 3D rendering not found. Please install scikit-image.")
+    except Exception as e:
+        logger.error(f"Error creating 3D rendering: {str(e)}")
+        raise
+
+
+def generate_visualization_report(mri_path, synthetic_ct_path, reference_ct_path, segmentation_path, output_dir):
+    """
+    Generate comprehensive visualization report.
+    
+    Args:
+        mri_path: Path to MRI file
+        synthetic_ct_path: Path to synthetic CT file
+        reference_ct_path: Path to reference CT file
+        segmentation_path: Path to segmentation file
+        output_dir: Output directory for report
+        
+    Returns:
+        Dictionary with report information
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    result = {
+        "image_paths": []
+    }
+    
+    # Load images
+    if mri_path:
+        mri = load_medical_image(mri_path)
+    else:
+        mri = None
+    
+    if synthetic_ct_path:
+        synthetic_ct = load_medical_image(synthetic_ct_path)
+    else:
+        synthetic_ct = None
+    
+    if reference_ct_path:
+        reference_ct = load_medical_image(reference_ct_path)
+    else:
+        reference_ct = None
+    
+    if segmentation_path:
+        segmentation = load_medical_image(segmentation_path)
+    else:
+        segmentation = None
+    
+    # Generate slice visualizations for each orientation
+    orientations = ['axial', 'coronal', 'sagittal']
+    positions = [0.3, 0.5, 0.7]  # Multiple positions
+    
+    for orientation in orientations:
+        for position in positions:
+            if mri is not None:
+                # Create MRI slice
+                output_path = os.path.join(output_dir, f"mri_{orientation}_{int(position*100)}.png")
+                plot_slice(mri, output_path, orientation=orientation, position=position, 
+                          title=f"MRI ({orientation}, position {int(position*100)}%)", 
+                          data_type='mri')
+                result["image_paths"].append(output_path)
+            
+            if synthetic_ct is not None:
+                # Create synthetic CT slice
+                output_path = os.path.join(output_dir, f"synthetic_ct_{orientation}_{int(position*100)}.png")
+                plot_slice(synthetic_ct, output_path, orientation=orientation, position=position, 
+                          title=f"Synthetic CT ({orientation}, position {int(position*100)}%)", 
+                          data_type='ct')
+                result["image_paths"].append(output_path)
+            
+            if reference_ct is not None:
+                # Create reference CT slice
+                output_path = os.path.join(output_dir, f"reference_ct_{orientation}_{int(position*100)}.png")
+                plot_slice(reference_ct, output_path, orientation=orientation, position=position, 
+                          title=f"Reference CT ({orientation}, position {int(position*100)}%)", 
+                          data_type='ct')
+                result["image_paths"].append(output_path)
+            
+            # Create comparison visualization
+            if synthetic_ct is not None and (mri is not None or reference_ct is not None):
+                output_path = os.path.join(output_dir, f"comparison_{orientation}_{int(position*100)}.png")
+                plot_comparison(
+                    mri if mri is not None else None,
+                    reference_ct if reference_ct is not None else None,
+                    segmentation,
+                    synthetic_ct,
+                    orientation=orientation,
+                    position=position,
+                    output_path=output_path
+                )
+                result["image_paths"].append(output_path)
+    
+    # Generate 3D visualizations if available
+    if synthetic_ct is not None:
+        try:
+            output_path = os.path.join(output_dir, "synthetic_ct_3d.png")
+            plot_3d_rendering(synthetic_ct, output_path)
+            result["image_paths"].append(output_path)
+        except Exception as e:
+            logger.warning(f"Error generating 3D rendering for synthetic CT: {str(e)}")
+    
+    if reference_ct is not None:
+        try:
+            output_path = os.path.join(output_dir, "reference_ct_3d.png")
+            plot_3d_rendering(reference_ct, output_path)
+            result["image_paths"].append(output_path)
+        except Exception as e:
+            logger.warning(f"Error generating 3D rendering for reference CT: {str(e)}")
+    
+    return result
+
+
+def generate_evaluation_report(mri, real_ct, synthetic_ct, segmentation=None, metrics=None, output_dir=None, dpi=150):
+    """
+    Generate evaluation report with visualizations and metrics.
+    
+    Args:
+        mri: MRI image or path
+        real_ct: Real CT image or path
+        synthetic_ct: Synthetic CT image or path
+        segmentation: Segmentation image or path (optional)
+        metrics: Dictionary of evaluation metrics
+        output_dir: Output directory for report
+        dpi: Resolution in dots per inch
+        
+    Returns:
+        Dictionary with report information
+    """
+    if output_dir is None:
+        return {"image_paths": []}
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Generate visualizations
+    vis_result = generate_visualization_report(
+        mri,
+        synthetic_ct,
+        real_ct,
+        segmentation,
+        output_dir
+    )
+    
+    # Return report information
+    return {
+        "image_paths": vis_result["image_paths"],
+        "metrics": metrics
+    } 

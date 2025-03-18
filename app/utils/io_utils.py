@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+
 """
 Utility functions for input/output operations
 """
@@ -302,4 +303,231 @@ class SyntheticCT:
             SyntheticCT object
         """
         image = load_medical_image(file_path)
-        return cls(image, metadata) 
+        return cls(image, metadata)
+
+
+def validate_input_file(file_path):
+    """
+    Kiểm tra tính hợp lệ của file đầu vào.
+    
+    Args:
+        file_path (str): Đường dẫn đến file cần kiểm tra
+        
+    Returns:
+        bool: True nếu file hợp lệ, False nếu không
+    """
+    file_path = Path(file_path)
+    
+    # Kiểm tra sự tồn tại của file
+    if not file_path.exists():
+        logging.error(f"File không tồn tại: {file_path}")
+        return False
+        
+    # Kiểm tra định dạng file
+    if file_path.is_dir():
+        # Nếu là thư mục, giả định là chuỗi DICOM
+        dicom_files = list(file_path.glob('*.dcm'))
+        if not dicom_files:
+            logging.error(f"Không tìm thấy file DICOM trong thư mục: {file_path}")
+            return False
+    else:
+        # Nếu là file, kiểm tra phần mở rộng
+        valid_extensions = ['.nii', '.nii.gz', '.dcm', '.mha', '.mhd', '.nrrd']
+        if not any(str(file_path).lower().endswith(ext) for ext in valid_extensions):
+            logging.error(f"Định dạng file không được hỗ trợ: {file_path}")
+            logging.error(f"Các định dạng được hỗ trợ: {', '.join(valid_extensions)}")
+            return False
+    
+    return True
+
+
+def ensure_output_dir(output_path):
+    """
+    Đảm bảo thư mục đầu ra tồn tại.
+    
+    Args:
+        output_path (str): Đường dẫn đến thư mục hoặc file đầu ra
+        
+    Returns:
+        Path: Đối tượng Path của thư mục đầu ra
+    """
+    output_path = Path(output_path)
+    
+    # Nếu output_path là file, lấy thư mục cha
+    if output_path.suffix:
+        output_dir = output_path.parent
+    else:
+        output_dir = output_path
+        
+    # Tạo thư mục nếu chưa tồn tại
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    return output_dir
+
+
+def load_multi_sequence_mri(paths, sequence_types=None):
+    """
+    Tải nhiều chuỗi MRI và đăng ký chúng để sẵn sàng cho xử lý.
+    
+    Args:
+        paths (list): Danh sách các đường dẫn đến các file MRI
+        sequence_types (list, optional): Danh sách các loại chuỗi MRI tương ứng với paths
+            (ví dụ: ['T1', 'T2', 'FLAIR']). Mặc định là None.
+            
+    Returns:
+        MultiSequenceMRI: Đối tượng chứa nhiều chuỗi MRI đã được đăng ký
+    """
+    if not paths:
+        raise ValueError("Danh sách đường dẫn không được để trống")
+        
+    if sequence_types and len(sequence_types) != len(paths):
+        raise ValueError("Số lượng loại chuỗi phải bằng số lượng đường dẫn")
+        
+    # Tải các chuỗi MRI
+    mri_sequences = {}
+    reference_image = None
+    
+    for i, path in enumerate(paths):
+        # Xác định tên chuỗi
+        seq_name = sequence_types[i] if sequence_types else f"sequence_{i+1}"
+        
+        logging.info(f"Tải chuỗi MRI {seq_name} từ {path}")
+        image = load_medical_image(path)
+        
+        if reference_image is None:
+            reference_image = image
+            mri_sequences[seq_name] = image
+        else:
+            # Đăng ký ảnh với ảnh tham chiếu
+            logging.info(f"Đăng ký chuỗi {seq_name} với chuỗi tham chiếu")
+            registered_image = register_image(image, reference_image)
+            mri_sequences[seq_name] = registered_image
+    
+    return MultiSequenceMRI(mri_sequences)
+
+
+class MultiSequenceMRI:
+    """Lớp đại diện cho nhiều chuỗi MRI đã được đăng ký."""
+    
+    def __init__(self, sequences):
+        """
+        Khởi tạo đối tượng MultiSequenceMRI.
+        
+        Args:
+            sequences (dict): Dictionary các chuỗi MRI, với key là tên chuỗi
+        """
+        self.sequences = sequences
+        self.reference_name = next(iter(sequences.keys()))
+        
+    def get_sequence(self, name):
+        """Lấy một chuỗi cụ thể theo tên."""
+        if name not in self.sequences:
+            raise ValueError(f"Chuỗi '{name}' không tồn tại")
+        return self.sequences[name]
+        
+    def get_reference(self):
+        """Lấy chuỗi tham chiếu."""
+        return self.sequences[self.reference_name]
+        
+    def get_all_sequences(self):
+        """Lấy tất cả các chuỗi."""
+        return self.sequences
+        
+    def get_sequence_names(self):
+        """Lấy danh sách tên các chuỗi."""
+        return list(self.sequences.keys())
+        
+    def save(self, output_dir):
+        """Lưu tất cả các chuỗi vào thư mục."""
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        for name, image in self.sequences.items():
+            output_path = output_dir / f"{name}.nii.gz"
+            save_medical_image(image, str(output_path))
+            
+        return output_dir 
+
+
+def register_image(moving_image, fixed_image, transform_type='rigid'):
+    """
+    Đăng ký (căn chỉnh) ảnh di động với ảnh cố định.
+    
+    Args:
+        moving_image: Ảnh cần căn chỉnh
+        fixed_image: Ảnh tham chiếu cố định
+        transform_type (str): Loại biến đổi ('rigid', 'affine', hoặc 'bspline')
+        
+    Returns:
+        Ảnh đã được căn chỉnh
+    """
+    import SimpleITK as sitk
+    
+    logging.info(f"Đăng ký ảnh sử dụng phương pháp {transform_type}")
+    
+    # Tạo đối tượng registration
+    registration_method = sitk.ImageRegistrationMethod()
+    
+    # Thiết lập phép đo tương tự
+    registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
+    registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
+    registration_method.SetMetricSamplingPercentage(0.1)
+    
+    # Thiết lập bộ nội suy
+    registration_method.SetInterpolator(sitk.sitkLinear)
+    
+    # Thiết lập bộ tối ưu hóa
+    registration_method.SetOptimizerAsGradientDescent(
+        learningRate=1.0, 
+        numberOfIterations=100, 
+        convergenceMinimumValue=1e-6, 
+        convergenceWindowSize=10
+    )
+    registration_method.SetOptimizerScalesFromPhysicalShift()
+    
+    # Thiết lập loại biến đổi
+    if transform_type == 'rigid':
+        initial_transform = sitk.CenteredTransformInitializer(
+            fixed_image, 
+            moving_image, 
+            sitk.Euler3DTransform(), 
+            sitk.CenteredTransformInitializerFilter.GEOMETRY
+        )
+    elif transform_type == 'affine':
+        initial_transform = sitk.CenteredTransformInitializer(
+            fixed_image, 
+            moving_image, 
+            sitk.AffineTransform(3), 
+            sitk.CenteredTransformInitializerFilter.GEOMETRY
+        )
+    elif transform_type == 'bspline':
+        mesh_size = [10, 10, 10]
+        initial_transform = sitk.BSplineTransformInitializer(
+            fixed_image, 
+            mesh_size
+        )
+    else:
+        raise ValueError(f"Loại biến đổi không được hỗ trợ: {transform_type}")
+    
+    registration_method.SetInitialTransform(initial_transform)
+    
+    # Thực hiện đăng ký
+    try:
+        final_transform = registration_method.Execute(fixed_image, moving_image)
+        logging.info("Đăng ký ảnh thành công")
+    except Exception as e:
+        logging.error(f"Lỗi trong quá trình đăng ký ảnh: {str(e)}")
+        logging.warning("Sử dụng biến đổi ban đầu")
+        final_transform = initial_transform
+    
+    # Áp dụng biến đổi
+    registered_image = sitk.Resample(
+        moving_image, 
+        fixed_image, 
+        final_transform, 
+        sitk.sitkLinear, 
+        0.0, 
+        moving_image.GetPixelID()
+    )
+    
+    return registered_image 

@@ -1,242 +1,305 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+
 """
-Configuration utilities for MRI to CT conversion
+Configuration utilities for MRI to CT conversion.
+Provides tools to load, save, and manage configuration.
 """
 
 import os
 import yaml
+import json
 import logging
-from typing import Dict, List, Any, Optional, Union
 from pathlib import Path
+from typing import Dict, Any, Optional, Union, List
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
-
-def load_config(config_path: Optional[str] = None) -> 'ConfigManager':
-    """
-    Load configuration from YAML file.
-    
-    Args:
-        config_path: Path to YAML configuration file. If None, uses default config.
-        
-    Returns:
-        ConfigManager object with loaded configuration
-    """
-    # If config_path is not provided, use default config
-    if config_path is None:
-        root_dir = Path(__file__).resolve().parent.parent.parent
-        config_path = os.path.join(root_dir, "configs", "default_config.yaml")
-    
-    logger.info(f"Loading configuration from {config_path}")
-    
-    try:
-        with open(config_path, 'r') as f:
-            config_data = yaml.safe_load(f)
-        
-        return ConfigManager(config_data, config_path)
-    
-    except FileNotFoundError:
-        logger.error(f"Configuration file not found: {config_path}")
-        raise
-    
-    except yaml.YAMLError as e:
-        logger.error(f"Error parsing YAML configuration: {str(e)}")
-        raise
-    
-    except Exception as e:
-        logger.error(f"Unexpected error loading configuration: {str(e)}")
-        raise
+# Default configuration file path
+DEFAULT_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "configs",
+    "default_config.yaml"
+)
 
 
 class ConfigManager:
-    """
-    Manager for configuration settings.
-    """
+    """Manage application configuration."""
     
-    def __init__(self, config_data: Dict[str, Any], config_path: str):
+    def __init__(self, config_path=None):
         """
-        Initialize with configuration data.
+        Initialize ConfigManager.
         
         Args:
-            config_data: Dictionary containing configuration settings
-            config_path: Path to the configuration file
+            config_path: Path to configuration file (None to use default)
         """
-        self.config = config_data
         self.config_path = config_path
-    
-    def get(self, section: str, key: Optional[str] = None, default: Any = None) -> Any:
-        """
-        Get configuration value.
+        self.config = {}
+        self.load_config()
         
-        Args:
-            section: Configuration section
-            key: Configuration key within section (None for entire section)
-            default: Default value if key/section doesn't exist
+    def load_config(self):
+        """Load configuration from file."""
+        # Start with default configuration
+        default_config = self._load_yaml_config(DEFAULT_CONFIG_PATH)
+        
+        # Override with user configuration if provided
+        if self.config_path and os.path.exists(self.config_path):
+            user_config = self._load_yaml_config(self.config_path)
+            self.config = self._deep_update(default_config, user_config)
+        else:
+            self.config = default_config
             
-        Returns:
-            Configuration value or default
-        """
+        return self.config
+    
+    def _load_yaml_config(self, file_path):
+        """Load YAML configuration file."""
         try:
-            if key is None:
-                return self.config.get(section, default)
+            with open(file_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            logger.info(f"Loaded configuration from {file_path}")
+            return config
+        except Exception as e:
+            logger.error(f"Error loading configuration from {file_path}: {str(e)}")
+            if file_path == DEFAULT_CONFIG_PATH:
+                logger.critical("Failed to load default configuration. Using empty configuration.")
+                return {}
             else:
-                section_data = self.config.get(section, {})
-                return section_data.get(key, default)
-        
-        except Exception as e:
-            logger.warning(f"Error getting config value {section}.{key}: {str(e)}")
-            return default
+                logger.warning("Using default configuration.")
+                return self._load_yaml_config(DEFAULT_CONFIG_PATH)
     
-    def get_nested(self, path: List[str], default: Any = None) -> Any:
+    def _deep_update(self, d1, d2):
         """
-        Get nested configuration value using path list.
+        Recursively update dictionary d1 with values from d2.
         
         Args:
-            path: List of keys defining path to value
-            default: Default value if path doesn't exist
+            d1: Base dictionary
+            d2: Dictionary with values to update
             
         Returns:
-            Configuration value or default
+            Updated dictionary
         """
-        try:
-            current = self.config
-            for key in path:
-                if key not in current:
-                    return default
-                current = current[key]
-            return current
-        
-        except Exception as e:
-            logger.warning(f"Error getting nested config value {'.'.join(path)}: {str(e)}")
-            return default
-    
-    def set(self, section: str, key: str, value: Any) -> None:
-        """
-        Set configuration value.
-        
-        Args:
-            section: Configuration section
-            key: Configuration key within section
-            value: Value to set
-        """
-        if section not in self.config:
-            self.config[section] = {}
-        
-        self.config[section][key] = value
-    
-    def save(self, path: Optional[str] = None) -> None:
-        """
-        Save configuration to YAML file.
-        
-        Args:
-            path: Path to save configuration (defaults to original path)
-        """
-        save_path = path if path is not None else self.config_path
-        
-        try:
-            with open(save_path, 'w') as f:
-                yaml.dump(self.config, f, default_flow_style=False)
+        if not isinstance(d1, dict) or not isinstance(d2, dict):
+            return d2
             
-            logger.info(f"Configuration saved to {save_path}")
-        
-        except Exception as e:
-            logger.error(f"Error saving configuration to {save_path}: {str(e)}")
-            raise
-    
-    def get_preprocessing_params(self) -> Dict[str, Any]:
-        """
-        Get preprocessing parameters.
-        
-        Returns:
-            Dictionary of preprocessing parameters
-        """
-        return self.get('preprocessing', default={})
-    
-    def get_segmentation_params(self, region: str) -> Dict[str, Any]:
-        """
-        Get segmentation parameters for a specific region.
-        
-        Args:
-            region: Anatomical region ('head', 'pelvis', or 'thorax')
-            
-        Returns:
-            Dictionary of segmentation parameters for the region
-        """
-        seg_config = self.get('segmentation', default={})
-        region_config = seg_config.get(region, {})
-        
-        # Merge with common settings
-        result = {k: v for k, v in seg_config.items() if k != 'head' and k != 'pelvis' and k != 'thorax'}
-        result.update(region_config)
+        result = d1.copy()
+        for k, v in d2.items():
+            if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+                result[k] = self._deep_update(result[k], v)
+            else:
+                result[k] = v
         
         return result
     
-    def get_conversion_params(self, method: str, region: str) -> Dict[str, Any]:
+    def save_config(self, output_path):
         """
-        Get conversion parameters for a specific method and region.
+        Save current configuration to file.
         
         Args:
-            method: Conversion method ('atlas', 'cnn', or 'gan')
-            region: Anatomical region ('head', 'pelvis', or 'thorax')
+            output_path: Path to save configuration
             
         Returns:
-            Dictionary of conversion parameters for the method and region
+            Path to saved configuration file
         """
-        conversion_config = self.get('conversion', default={})
-        method_config = conversion_config.get(method, {})
-        region_config = method_config.get(region, {})
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
-        return region_config
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
+            logger.info(f"Saved configuration to {output_path}")
+            return output_path
+        except Exception as e:
+            logger.error(f"Error saving configuration to {output_path}: {str(e)}")
+            return None
     
-    def get_evaluation_params(self) -> Dict[str, Any]:
+    def get(self, *keys, default=None):
         """
-        Get evaluation parameters.
+        Get value from configuration using nested keys.
         
+        Args:
+            *keys: Key path to access nested configuration
+            default: Default value if key not found
+            
         Returns:
-            Dictionary of evaluation parameters
+            Configuration value or default
         """
+        result = self.config
+        for key in keys:
+            if isinstance(result, dict) and key in result:
+                result = result[key]
+            else:
+                return default
+        return result
+    
+    def set(self, value, *keys):
+        """
+        Set value in configuration using nested keys.
+        
+        Args:
+            value: Value to set
+            *keys: Key path to access nested configuration
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not keys:
+            return False
+            
+        current = self.config
+        for key in keys[:-1]:
+            if key not in current:
+                current[key] = {}
+            current = current[key]
+            
+        current[keys[-1]] = value
+        return True
+    
+    def update(self, updates):
+        """
+        Update configuration with dictionary of updates.
+        
+        Args:
+            updates: Dictionary with updates
+            
+        Returns:
+            Updated configuration
+        """
+        self.config = self._deep_update(self.config, updates)
+        return self.config
+    
+    def get_conversion_params(self, method, region):
+        """
+        Get conversion parameters for specified method and region.
+        
+        Args:
+            method: Conversion method ('atlas', 'cnn', 'gan')
+            region: Anatomical region ('head', 'pelvis', 'thorax')
+            
+        Returns:
+            Conversion parameters as dictionary
+        """
+        return self.get('conversion', method, region, default={})
+    
+    def get_preprocessing_params(self):
+        """Get preprocessing parameters."""
+        return self.get('preprocessing', default={})
+    
+    def get_segmentation_params(self, region):
+        """
+        Get segmentation parameters for specified region.
+        
+        Args:
+            region: Anatomical region ('head', 'pelvis', 'thorax')
+            
+        Returns:
+            Segmentation parameters as dictionary
+        """
+        return self.get('segmentation', region, default={})
+    
+    def get_evaluation_params(self):
+        """Get evaluation parameters."""
         return self.get('evaluation', default={})
     
-    def get_gui_params(self) -> Dict[str, Any]:
-        """
-        Get GUI parameters.
-        
-        Returns:
-            Dictionary of GUI parameters
-        """
+    def get_gui_params(self):
+        """Get GUI parameters."""
         return self.get('gui', default={})
+
+
+# Global configuration manager instance
+_config_manager = None
+
+
+def load_config(config_path=None):
+    """
+    Load configuration from file.
     
-    def get_io_params(self) -> Dict[str, Any]:
-        """
-        Get IO parameters.
+    Args:
+        config_path: Path to configuration file (None to use default)
         
-        Returns:
-            Dictionary of IO parameters
-        """
-        return self.get('io', default={})
+    Returns:
+        Loaded configuration
+    """
+    global _config_manager
     
-    def merge_config(self, new_config: Dict[str, Any]) -> None:
-        """
-        Merge new configuration with existing configuration.
-        
-        Args:
-            new_config: New configuration to merge
-        """
-        self._merge_dicts(self.config, new_config)
+    if _config_manager is None or (_config_manager.config_path != config_path and config_path is not None):
+        _config_manager = ConfigManager(config_path)
     
-    def _merge_dicts(self, d1: Dict[str, Any], d2: Dict[str, Any]) -> None:
-        """
-        Recursively merge dictionaries.
+    return _config_manager
+
+
+def get_config():
+    """
+    Get current configuration.
+    
+    Returns:
+        Current configuration
+    """
+    global _config_manager
+    
+    if _config_manager is None:
+        _config_manager = ConfigManager()
+    
+    return _config_manager
+
+
+def create_default_config(output_path):
+    """
+    Create default configuration file.
+    
+    Args:
+        output_path: Path to save default configuration
         
-        Args:
-            d1: First dictionary (modified in place)
-            d2: Second dictionary (values override d1)
-        """
-        for k, v in d2.items():
-            if k in d1 and isinstance(d1[k], dict) and isinstance(v, dict):
-                self._merge_dicts(d1[k], v)
-            else:
-                d1[k] = v 
+    Returns:
+        Path to saved configuration file
+    """
+    config_manager = ConfigManager()
+    return config_manager.save_config(output_path)
+
+
+def update_config_from_args(args):
+    """
+    Update configuration from command line arguments.
+    
+    Args:
+        args: Parsed command line arguments
+        
+    Returns:
+        Updated configuration
+    """
+    # Get current configuration
+    config_manager = get_config()
+    
+    # Create updates from arguments
+    updates = {}
+    
+    # Handle common arguments
+    if hasattr(args, 'region') and args.region:
+        updates['conversion'] = {'default_region': args.region}
+    
+    if hasattr(args, 'model') and args.model:
+        updates['conversion'] = {'default_method': args.model}
+    
+    # Mode-specific updates
+    if hasattr(args, 'mode'):
+        if args.mode == 'preprocess':
+            if hasattr(args, 'bias_correction'):
+                updates['preprocessing'] = {'bias_field_correction': {'enable': args.bias_correction}}
+            if hasattr(args, 'denoise'):
+                updates['preprocessing'] = {'denoising': {'enable': args.denoise}}
+            if hasattr(args, 'normalize'):
+                updates['preprocessing'] = {'normalization': {'enable': args.normalize}}
+        
+        elif args.mode == 'segment':
+            if hasattr(args, 'method') and args.method:
+                updates['segmentation'] = {'method': args.method}
+        
+        elif args.mode == 'evaluate':
+            if hasattr(args, 'metrics') and args.metrics:
+                metrics_list = args.metrics.split(',')
+                updates['evaluation'] = {'metrics': metrics_list}
+    
+    # Update configuration
+    config_manager.update(updates)
+    
+    return config_manager.config 

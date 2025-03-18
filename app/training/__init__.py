@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 """
 Training module for MRI to synthetic CT conversion models.
 Includes CNN and GAN model training functionality.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+
 """
 Command-line interface for MRI to synthetic CT conversion.
 This module provides a command-line interface for preprocessing MRI images,
@@ -19,461 +20,863 @@ import matplotlib.pyplot as plt
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.utils.config_utils import load_config, ConfigManager
-from app.utils.io_utils import load_medical_image, save_medical_image, SyntheticCT
+from app.utils.config_utils import load_config, ConfigManager, create_default_config, update_config_from_args
+from app.utils.io_utils import load_medical_image, save_medical_image, SyntheticCT, validate_input_file, ensure_output_dir, load_multi_sequence_mri
 from app.utils.dicom_utils import (
     load_dicom_series, save_dicom_series, 
     create_synthetic_dicom_series, anonymize_dicom
 )
 from app.core.preprocessing import preprocess_mri
 from app.core.segmentation import segment_tissues
-from app.core.conversion import convert_mri_to_ct
+from app.core.conversion import convert_mri_to_ct, available_conversion_methods
 from app.core.evaluation import evaluate_synthetic_ct
 from app.visualization import plot_image_slice, plot_comparison, create_visual_report
+from app.utils.logging_utils import setup_logging
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(args):
-    """Set up logging."""
-    config = load_config()
+def setup_parser():
+    """
+    Set up command-line argument parser.
     
-    # Get logging level from config or command line
-    log_level = getattr(logging, args.log_level.upper(), None)
-    if not isinstance(log_level, int):
-        log_level = getattr(logging, config.get('general', {}).get('logging_level', 'INFO').upper(), logging.INFO)
-    
-    # Create logs directory if it doesn't exist
-    log_dir = Path('logs')
-    log_dir.mkdir(exist_ok=True)
-    
-    # Set up logging
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_dir / f"{args.command}_{Path(args.input).stem}.log"),
-            logging.StreamHandler()
-        ]
+    Returns:
+        ArgumentParser: Configured argument parser
+    """
+    parser = argparse.ArgumentParser(
+        description="MRI to synthetic CT conversion for radiotherapy",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run entire conversion pipeline on a T1-weighted MRI scan
+  python -m app.cli pipeline --input path/to/t1.nii.gz --output path/to/output --region head
+  
+  # Run preprocessing only
+  python -m app.cli preprocess --input path/to/t1.nii.gz --output path/to/output
+  
+  # Run conversion with CNN model
+  python -m app.cli convert --input path/to/preprocessed.nii.gz --output path/to/output --model cnn --region head
+  
+  # Run evaluation on synthetic CT
+  python -m app.cli evaluate --synthetic path/to/synthetic_ct.nii.gz --reference path/to/real_ct.nii.gz --output path/to/output
+  
+  # Use a custom configuration file
+  python -m app.cli pipeline --input path/to/t1.nii.gz --output path/to/output --config path/to/config.yaml
+        """
     )
     
-    logger.info(f"Starting {args.command} with arguments: {args}")
+    # Global arguments
+    parser.add_argument("--config", help="Path to configuration file")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], 
+                        default="INFO", help="Set logging level")
+    parser.add_argument("--log-file", help="Path to log file")
+    
+    # Create subparsers for different modes
+    subparsers = parser.add_subparsers(dest="mode", help="Mode of operation")
+    
+    # Config mode
+    config_parser = subparsers.add_parser("config", help="Create or manage configuration files")
+    config_parser.add_argument("--create-default", help="Path to create default configuration file")
+    
+    # Preprocess mode
+    preprocess_parser = subparsers.add_parser("preprocess", help="Preprocess MRI images")
+    preprocess_parser.add_argument("--input", required=True, help="Path to input MRI file")
+    preprocess_parser.add_argument("--output", required=True, help="Path to output directory")
+    preprocess_parser.add_argument("--bias-correction", action="store_true", help="Apply bias field correction")
+    preprocess_parser.add_argument("--denoise", action="store_true", help="Apply denoising")
+    preprocess_parser.add_argument("--normalize", action="store_true", help="Apply intensity normalization")
+    
+    # Multi-sequence parser (for handling multiple MRI sequences)
+    multi_seq_parser = subparsers.add_parser("multi-sequence", help="Process multiple MRI sequences")
+    multi_seq_parser.add_argument("--inputs", required=True, nargs="+", help="Paths to input MRI files")
+    multi_seq_parser.add_argument("--sequences", required=True, nargs="+", 
+                                 choices=["T1", "T2", "FLAIR", "DWI", "ADC", "DIXON"],
+                                 help="MRI sequence types (in the same order as inputs)")
+    multi_seq_parser.add_argument("--output", required=True, help="Path to output directory")
+    multi_seq_parser.add_argument("--reference", default="T1", 
+                                 choices=["T1", "T2", "FLAIR", "DWI", "ADC", "DIXON"],
+                                 help="Reference sequence for registration")
+    
+    # Segment mode
+    segment_parser = subparsers.add_parser("segment", help="Segment tissues in MRI images")
+    segment_parser.add_argument("--input", required=True, help="Path to preprocessed MRI file")
+    segment_parser.add_argument("--output", required=True, help="Path to output directory")
+    segment_parser.add_argument("--region", required=True, choices=["head", "pelvis", "thorax"], 
+                               help="Anatomical region")
+    segment_parser.add_argument("--method", choices=["atlas", "nn"], default="nn",
+                              help="Segmentation method (atlas-based or neural network)")
+    
+    # Convert mode
+    convert_parser = subparsers.add_parser("convert", help="Convert MRI to synthetic CT")
+    convert_parser.add_argument("--input", required=True, help="Path to preprocessed MRI file")
+    convert_parser.add_argument("--segmentation", help="Path to tissue segmentation file (optional)")
+    convert_parser.add_argument("--output", required=True, help="Path to output directory")
+    convert_parser.add_argument("--model", required=True, choices=available_conversion_methods(),
+                              help="Conversion model to use")
+    convert_parser.add_argument("--region", required=True, choices=["head", "pelvis", "thorax"],
+                              help="Anatomical region")
+    convert_parser.add_argument("--multi-sequence", action="store_true", 
+                              help="Enable multi-sequence conversion if multiple inputs are available")
+    
+    # Evaluate mode
+    evaluate_parser = subparsers.add_parser("evaluate", help="Evaluate synthetic CT")
+    evaluate_parser.add_argument("--synthetic", required=True, help="Path to synthetic CT file")
+    evaluate_parser.add_argument("--reference", required=True, help="Path to reference CT file")
+    evaluate_parser.add_argument("--segmentation", help="Path to tissue segmentation for region-specific metrics")
+    evaluate_parser.add_argument("--output", required=True, help="Path to output directory")
+    evaluate_parser.add_argument("--metrics", default="mae,mse,psnr,ssim",
+                               help="Comma-separated list of metrics to calculate")
+    evaluate_parser.add_argument("--regions-of-interest", help="Comma-separated list of ROI labels to analyze separately")
+    evaluate_parser.add_argument("--generate-report", action="store_true", help="Generate comprehensive PDF report")
+    evaluate_parser.add_argument("--export-format", choices=["json", "csv", "both"], default="json",
+                               help="Format for exporting evaluation results")
+    evaluate_parser.add_argument("--histogram-compare", action="store_true", help="Include histogram comparison in evaluation")
+    evaluate_parser.add_argument("--dose-calculation", action="store_true", 
+                               help="Perform dose calculation comparison (requires additional RT structure and plan files)")
+    evaluate_parser.add_argument("--rt-structures", help="Path to RT structure set for dose calculation")
+    evaluate_parser.add_argument("--rt-plan", help="Path to RT plan for dose calculation")
+    
+    # Pipeline mode (run entire workflow)
+    pipeline_parser = subparsers.add_parser("pipeline", help="Run entire MRI to synthetic CT pipeline")
+    pipeline_parser.add_argument("--input", required=True, help="Path to input MRI file")
+    pipeline_parser.add_argument("--output", required=True, help="Path to output directory")
+    pipeline_parser.add_argument("--region", required=True, choices=["head", "pelvis", "thorax"],
+                               help="Anatomical region")
+    pipeline_parser.add_argument("--model", default="gan", choices=available_conversion_methods(),
+                               help="Conversion model to use")
+    pipeline_parser.add_argument("--reference-ct", help="Path to reference CT for evaluation (optional)")
+    pipeline_parser.add_argument("--skip-preprocessing", action="store_true", 
+                               help="Skip preprocessing step (use if input is already preprocessed)")
+    pipeline_parser.add_argument("--skip-segmentation", action="store_true",
+                               help="Skip segmentation step (use if segmentation is not required)")
+    
+    # Visualization mode
+    visualization_parser = subparsers.add_parser("visualize", help="Visualize results")
+    visualization_parser.add_argument("--mri", help="Path to MRI file")
+    visualization_parser.add_argument("--synthetic-ct", help="Path to synthetic CT file")
+    visualization_parser.add_argument("--reference-ct", help="Path to reference CT file")
+    visualization_parser.add_argument("--segmentation", help="Path to segmentation file")
+    visualization_parser.add_argument("--output", required=True, help="Path to output directory for visualizations")
+    visualization_parser.add_argument("--type", choices=["slice", "compare", "3d", "all"], default="compare",
+                                    help="Type of visualization to generate")
+    visualization_parser.add_argument("--orientation", choices=["axial", "sagittal", "coronal", "all"], default="axial",
+                                    help="Slice orientation for 2D visualizations")
+    visualization_parser.add_argument("--slices", type=str, help="Comma-separated list of slice indices to visualize")
+    visualization_parser.add_argument("--window-level", type=str, 
+                                    help="Window/level values in format 'window,level' for CT visualization")
+    visualization_parser.add_argument("--colormap", help="Colormap to use for visualizations")
+    visualization_parser.add_argument("--overlay", action="store_true", help="Create overlay visualizations")
+    visualization_parser.add_argument("--difference-map", action="store_true", help="Generate difference maps")
+    visualization_parser.add_argument("--interactive", action="store_true", 
+                                    help="Generate interactive visualizations (HTML output)")
+    
+    # Patient archive mode
+    patient_parser = subparsers.add_parser("patient", help="Manage patient data archive")
+    patient_parser.add_argument("--action", choices=["import", "export", "list", "delete", "anonymize"],
+                              required=True, help="Action to perform")
+    patient_parser.add_argument("--input", help="Path to input file/directory (for import/export actions)")
+    patient_parser.add_argument("--output", help="Path to output directory (for export action)")
+    patient_parser.add_argument("--patient-id", help="Patient ID (for list/export/delete actions)")
+    patient_parser.add_argument("--modalities", help="Comma-separated list of modalities to import/export")
+    patient_parser.add_argument("--anonymize", action="store_true", help="Anonymize data during import/export")
+
+    # Deployment mode
+    deploy_parser = subparsers.add_parser("deploy", help="Deploy model as service")
+    deploy_parser.add_argument("--model", required=True, choices=available_conversion_methods(),
+                             help="Model to deploy")
+    deploy_parser.add_argument("--region", required=True, choices=["head", "pelvis", "thorax"],
+                             help="Anatomical region")
+    deploy_parser.add_argument("--port", type=int, default=8000, help="Port to run service on")
+    deploy_parser.add_argument("--host", default="0.0.0.0", help="Host to run service on")
+    deploy_parser.add_argument("--workers", type=int, default=1, help="Number of worker processes")
+    deploy_parser.add_argument("--api-key", help="API key for authentication")
+    deploy_parser.add_argument("--ssl-cert", help="Path to SSL certificate")
+    deploy_parser.add_argument("--ssl-key", help="Path to SSL key")
+    
+    return parser
 
 
-def preprocess_command(args):
-    """Handle preprocessing command."""
-    # Load MRI image
-    logger.info(f"Loading MRI image from {args.input}")
-    mri_image = load_medical_image(args.input)
+def process_config_command(args):
+    """
+    Process config-related commands.
     
-    # Preprocess MRI
-    logger.info("Preprocessing MRI image")
-    preprocessed_mri = preprocess_mri(
-        mri_image,
-        apply_bias_field_correction=args.bias_correction,
-        apply_denoising=args.denoise,
-        apply_normalization=args.normalize,
-        apply_resampling=args.resample,
-        target_spacing=args.target_spacing
-    )
-    
-    # Save preprocessed MRI
-    logger.info(f"Saving preprocessed MRI to {args.output}")
-    save_medical_image(preprocessed_mri, args.output)
-    
-    logger.info("Preprocessing completed successfully")
+    Args:
+        args: Parsed command-line arguments
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    if args.create_default:
+        try:
+            path = create_default_config(args.create_default)
+            print(f"Default configuration created at: {path}")
+            return 0
+        except Exception as e:
+            print(f"Error creating default configuration: {str(e)}")
+            return 1
+    else:
+        print("Please specify a config action (e.g., --create-default)")
+        return 1
 
 
-def segment_command(args):
-    """Handle segmentation command."""
-    # Load MRI image
-    logger.info(f"Loading MRI image from {args.input}")
-    mri_image = load_medical_image(args.input)
+def process_preprocess_command(args, config):
+    """
+    Process preprocessing command.
     
-    # Segment tissues
-    logger.info(f"Segmenting tissues using {args.method} method for {args.region} region")
-    segmentation = segment_tissues(
-        mri_image,
-        method=args.method,
-        anatomical_region=args.region
-    )
+    Args:
+        args: Parsed command-line arguments
+        config: Configuration manager
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    # Validate input file
+    if not validate_input_file(args.input):
+        return 1
     
-    # Save segmentation
-    logger.info(f"Saving segmentation to {args.output}")
-    save_medical_image(segmentation, args.output)
+    # Ensure output directory exists
+    output_dir = ensure_output_dir(args.output)
+    if not output_dir:
+        return 1
     
-    logger.info("Segmentation completed successfully")
+    try:
+        # Get preprocessing parameters
+        params = config.get_preprocessing_params()
+        
+        # Run preprocessing
+        output_path = preprocess_mri(
+            args.input, 
+            output_dir,
+            bias_correction=args.bias_correction if args.bias_correction else params.get('bias_field_correction', {}).get('enable', True),
+            denoise=args.denoise if args.denoise else params.get('denoising', {}).get('enable', True),
+            normalize=args.normalize if args.normalize else params.get('normalization', {}).get('enable', True)
+        )
+        
+        print(f"Preprocessing completed. Output saved to: {output_path}")
+        return 0
+    
+    except Exception as e:
+        logging.error(f"Error during preprocessing: {str(e)}", exc_info=True)
+        print(f"Error during preprocessing: {str(e)}")
+        return 1
 
 
-def convert_command(args):
-    """Handle conversion command."""
-    # Load MRI image
-    logger.info(f"Loading MRI image from {args.input}")
-    mri_image = load_medical_image(args.input)
+def process_multi_sequence_command(args, config):
+    """
+    Process multi-sequence command.
     
-    # Load segmentation if provided
-    segmentation = None
-    if args.segmentation:
-        logger.info(f"Loading segmentation from {args.segmentation}")
-        segmentation = load_medical_image(args.segmentation)
+    Args:
+        args: Parsed command-line arguments
+        config: Configuration manager
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    # Validate input files
+    for input_file in args.inputs:
+        if not validate_input_file(input_file):
+            return 1
     
-    # Convert MRI to synthetic CT
-    logger.info(f"Converting MRI to synthetic CT using {args.method} method")
-    synthetic_ct = convert_mri_to_ct(
-        mri_image,
-        segmentation=segmentation,
-        method=args.method,
-        model_path=args.model
-    )
+    # Check if number of inputs matches number of sequences
+    if len(args.inputs) != len(args.sequences):
+        print(f"Error: Number of inputs ({len(args.inputs)}) does not match number of sequences ({len(args.sequences)})")
+        return 1
     
-    # Save synthetic CT
-    logger.info(f"Saving synthetic CT to {args.output}")
-    if args.output.lower().endswith('.dcm') or Path(args.output).is_dir():
-        # Save as DICOM series
-        if isinstance(args.input, str) and Path(args.input).is_dir():
-            # If input is a DICOM series, use it as reference
-            logger.info("Creating synthetic DICOM series from reference MRI DICOM")
-            create_synthetic_dicom_series(
-                synthetic_ct.image,
+    # Ensure output directory exists
+    output_dir = ensure_output_dir(args.output)
+    if not output_dir:
+        return 1
+    
+    try:
+        # Load multi-sequence MRI
+        multi_seq_mri = load_multi_sequence_mri(args.inputs, args.sequences)
+        
+        # Set reference sequence
+        multi_seq_mri.set_reference(args.reference)
+        
+        # Register and save
+        multi_seq_mri.register_all()
+        output_paths = multi_seq_mri.save_all(output_dir)
+        
+        print(f"Multi-sequence processing completed. Outputs saved to: {output_dir}")
+        for seq, path in zip(args.sequences, output_paths):
+            print(f"  - {seq}: {path}")
+        
+        return 0
+    
+    except Exception as e:
+        logging.error(f"Error during multi-sequence processing: {str(e)}", exc_info=True)
+        print(f"Error during multi-sequence processing: {str(e)}")
+        return 1
+
+
+def process_segment_command(args, config):
+    """
+    Process segmentation command.
+    
+    Args:
+        args: Parsed command-line arguments
+        config: Configuration manager
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    # Validate input file
+    if not validate_input_file(args.input):
+        return 1
+    
+    # Ensure output directory exists
+    output_dir = ensure_output_dir(args.output)
+    if not output_dir:
+        return 1
+    
+    try:
+        # Get segmentation parameters
+        params = config.get_segmentation_params(args.region)
+        
+        # Run segmentation
+        output_path = segment_tissues(
+            args.input,
+            output_dir,
+            region=args.region,
+            method=args.method if args.method else params.get('method', 'nn')
+        )
+        
+        print(f"Segmentation completed. Output saved to: {output_path}")
+        return 0
+    
+    except Exception as e:
+        logging.error(f"Error during segmentation: {str(e)}", exc_info=True)
+        print(f"Error during segmentation: {str(e)}")
+        return 1
+
+
+def process_convert_command(args, config):
+    """
+    Process conversion command.
+    
+    Args:
+        args: Parsed command-line arguments
+        config: Configuration manager
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    # Validate input file
+    if not validate_input_file(args.input):
+        return 1
+    
+    # Validate segmentation file if provided
+    if args.segmentation and not validate_input_file(args.segmentation):
+        return 1
+    
+    # Ensure output directory exists
+    output_dir = ensure_output_dir(args.output)
+    if not output_dir:
+        return 1
+    
+    try:
+        # Get conversion parameters
+        params = config.get_conversion_params(args.model, args.region)
+        
+        # Run conversion
+        output_path = convert_mri_to_ct(
+            args.input,
+            output_dir,
+            method=args.model,
+            region=args.region,
+            segmentation_path=args.segmentation,
+            use_multi_sequence=args.multi_sequence,
+            params=params
+        )
+        
+        print(f"Conversion completed. Output saved to: {output_path}")
+        return 0
+    
+    except Exception as e:
+        logging.error(f"Error during conversion: {str(e)}", exc_info=True)
+        print(f"Error during conversion: {str(e)}")
+        return 1
+
+
+def process_evaluate_command(args, config):
+    """
+    Process evaluation command.
+    
+    Args:
+        args: Parsed command-line arguments
+        config: Configuration manager
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    # Validate input files
+    if not validate_input_file(args.synthetic):
+        return 1
+    
+    if not validate_input_file(args.reference):
+        return 1
+    
+    if args.segmentation and not validate_input_file(args.segmentation):
+        return 1
+    
+    # Ensure output directory exists
+    output_dir = ensure_output_dir(args.output)
+    if not output_dir:
+        return 1
+    
+    try:
+        # Get evaluation parameters
+        params = config.get_evaluation_params()
+        
+        # Parse metrics
+        metrics = args.metrics.split(',')
+        
+        # Run evaluation
+        result = evaluate_synthetic_ct(
+            args.synthetic,
+            args.reference,
+            output_dir,
+            segmentation_path=args.segmentation,
+            metrics=metrics
+        )
+        
+        print(f"Evaluation completed. Results saved to: {output_dir}")
+        print("\nMetrics:")
+        for metric, value in result.metrics.items():
+            print(f"  - {metric}: {value}")
+        
+        return 0
+    
+    except Exception as e:
+        logging.error(f"Error during evaluation: {str(e)}", exc_info=True)
+        print(f"Error during evaluation: {str(e)}")
+        return 1
+
+
+def process_pipeline_command(args, config):
+    """
+    Process pipeline command (run entire workflow).
+    
+    Args:
+        args: Parsed command-line arguments
+        config: Configuration manager
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    # Validate input file
+    if not validate_input_file(args.input):
+        return 1
+    
+    # Validate reference CT if provided
+    if args.reference_ct and not validate_input_file(args.reference_ct):
+        return 1
+    
+    # Ensure output directory exists
+    output_dir = ensure_output_dir(args.output)
+    if not output_dir:
+        return 1
+    
+    try:
+        # Create subdirectories
+        preproc_dir = os.path.join(output_dir, "preprocessed")
+        segment_dir = os.path.join(output_dir, "segmentation")
+        convert_dir = os.path.join(output_dir, "synthetic_ct")
+        eval_dir = os.path.join(output_dir, "evaluation")
+        
+        os.makedirs(preproc_dir, exist_ok=True)
+        os.makedirs(segment_dir, exist_ok=True)
+        os.makedirs(convert_dir, exist_ok=True)
+        if args.reference_ct:
+            os.makedirs(eval_dir, exist_ok=True)
+        
+        # Step 1: Preprocessing
+        preprocessed_path = args.input
+        if not args.skip_preprocessing:
+            print("Step 1/4: Preprocessing MRI...")
+            preprocessed_path = preprocess_mri(
                 args.input,
-                args.output,
-                anonymize=args.anonymize
+                preproc_dir,
+                bias_correction=True,
+                denoise=True,
+                normalize=True
             )
+            print(f"Preprocessing completed. Output saved to: {preprocessed_path}")
         else:
-            # Otherwise, save as a new DICOM series
-            logger.info("Saving as DICOM series")
-            save_dicom_series(
-                synthetic_ct.image,
-                args.output
+            print("Step 1/4: Preprocessing skipped.")
+        
+        # Step 2: Segmentation
+        segmentation_path = None
+        if not args.skip_segmentation:
+            print("\nStep 2/4: Segmenting tissues...")
+            segmentation_path = segment_tissues(
+                preprocessed_path,
+                segment_dir,
+                region=args.region,
+                method='nn'
             )
-    else:
-        # Save as other format (NIfTI, etc.)
-        save_medical_image(synthetic_ct.image, args.output)
+            print(f"Segmentation completed. Output saved to: {segmentation_path}")
+        else:
+            print("\nStep 2/4: Segmentation skipped.")
+        
+        # Step 3: Conversion
+        print("\nStep 3/4: Converting MRI to synthetic CT...")
+        synthetic_ct_path = convert_mri_to_ct(
+            preprocessed_path,
+            convert_dir,
+            method=args.model,
+            region=args.region,
+            segmentation_path=segmentation_path
+        )
+        print(f"Conversion completed. Output saved to: {synthetic_ct_path}")
+        
+        # Step 4: Evaluation (if reference CT provided)
+        if args.reference_ct:
+            print("\nStep 4/4: Evaluating synthetic CT...")
+            result = evaluate_synthetic_ct(
+                synthetic_ct_path,
+                args.reference_ct,
+                eval_dir,
+                segmentation_path=segmentation_path
+            )
+            
+            print(f"Evaluation completed. Results saved to: {eval_dir}")
+            print("\nMetrics:")
+            for metric, value in result.metrics.items():
+                print(f"  - {metric}: {value}")
+        else:
+            print("\nStep 4/4: Evaluation skipped (no reference CT provided).")
+        
+        print("\nPipeline completed successfully!")
+        return 0
     
-    logger.info("Conversion completed successfully")
+    except Exception as e:
+        logging.error(f"Error during pipeline execution: {str(e)}", exc_info=True)
+        print(f"Error during pipeline execution: {str(e)}")
+        return 1
 
 
-def evaluate_command(args):
-    """Handle evaluation command."""
-    # Load synthetic CT
-    logger.info(f"Loading synthetic CT from {args.synthetic_ct}")
-    synthetic_ct = load_medical_image(args.synthetic_ct)
+def process_visualize_command(args, config):
+    """
+    Process visualization command.
     
-    # Load reference CT
-    logger.info(f"Loading reference CT from {args.reference_ct}")
-    reference_ct = load_medical_image(args.reference_ct)
-    
-    # Load segmentation/mask if provided
-    mask = None
-    if args.mask:
-        logger.info(f"Loading evaluation mask from {args.mask}")
-        mask = load_medical_image(args.mask)
-    
-    # Evaluate synthetic CT
-    logger.info("Evaluating synthetic CT")
-    evaluation_results = evaluate_synthetic_ct(
-        synthetic_ct,
-        reference_ct,
-        mask=mask,
-        metrics=args.metrics.split(',')
+    Args:
+        args: Parsed command-line arguments
+        config: Configuration manager
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    # Import here to avoid circular imports
+    from app.utils.visualization import (
+        plot_slice, plot_comparison, plot_3d_rendering, generate_visualization_report
     )
     
-    # Print evaluation results
-    logger.info("Evaluation results:")
-    for metric, value in evaluation_results.items():
-        logger.info(f"{metric}: {value}")
+    # Validate input files
+    if args.mri and not validate_input_file(args.mri):
+        return 1
     
-    # Create visual report if requested
-    if args.report:
-        logger.info(f"Creating visual report at {args.report}")
-        create_visual_report(
-            mri=None,  # We don't have MRI here
-            synthetic_ct=synthetic_ct,
-            reference_ct=reference_ct,
-            evaluation_results=evaluation_results,
-            output_path=args.report
-        )
+    if args.synthetic_ct and not validate_input_file(args.synthetic_ct):
+        return 1
     
-    logger.info("Evaluation completed successfully")
+    if args.reference_ct and not validate_input_file(args.reference_ct):
+        return 1
+    
+    if args.segmentation and not validate_input_file(args.segmentation):
+        return 1
+    
+    # Ensure at least one input file
+    if not (args.mri or args.synthetic_ct or args.reference_ct):
+        print("Error: At least one input file (MRI, synthetic CT, or reference CT) must be provided")
+        return 1
+    
+    # Ensure output directory exists
+    output_dir = ensure_output_dir(args.output)
+    if not output_dir:
+        return 1
+    
+    try:
+        # Process visualization based on type
+        if args.type == "slice" or args.type == "all":
+            # Generate slice visualizations
+            if args.mri:
+                plot_slice(args.mri, os.path.join(output_dir, "mri_slice.png"), title="MRI")
+            
+            if args.synthetic_ct:
+                plot_slice(args.synthetic_ct, os.path.join(output_dir, "synthetic_ct_slice.png"), 
+                           title="Synthetic CT", data_type="ct")
+            
+            if args.reference_ct:
+                plot_slice(args.reference_ct, os.path.join(output_dir, "reference_ct_slice.png"), 
+                           title="Reference CT", data_type="ct")
+            
+            if args.segmentation:
+                plot_slice(args.segmentation, os.path.join(output_dir, "segmentation_slice.png"), 
+                           title="Tissue Segmentation", data_type="segmentation")
+        
+        if args.type == "compare" or args.type == "all":
+            # Generate comparison visualization
+            if args.mri and args.synthetic_ct:
+                plot_comparison(
+                    mri_path=args.mri,
+                    synthetic_ct_path=args.synthetic_ct,
+                    reference_ct_path=args.reference_ct,
+                    segmentation_path=args.segmentation,
+                    output_path=os.path.join(output_dir, "comparison.png")
+                )
+        
+        if args.type == "3d" or args.type == "all":
+            # Generate 3D rendering
+            if args.synthetic_ct:
+                plot_3d_rendering(args.synthetic_ct, os.path.join(output_dir, "synthetic_ct_3d.png"))
+            
+            if args.reference_ct:
+                plot_3d_rendering(args.reference_ct, os.path.join(output_dir, "reference_ct_3d.png"))
+        
+        if args.type == "all":
+            # Generate comprehensive report
+            generate_visualization_report(
+                mri_path=args.mri,
+                synthetic_ct_path=args.synthetic_ct,
+                reference_ct_path=args.reference_ct,
+                segmentation_path=args.segmentation,
+                output_dir=output_dir
+            )
+        
+        print(f"Visualization completed. Results saved to: {output_dir}")
+        return 0
+    
+    except Exception as e:
+        logging.error(f"Error during visualization: {str(e)}", exc_info=True)
+        print(f"Error during visualization: {str(e)}")
+        return 1
 
 
-def visualize_command(args):
-    """Handle visualization command."""
-    # Load images
-    images = []
-    titles = []
+def process_patient_command(args, config):
+    """
+    Process patient data management command.
     
-    logger.info(f"Loading image from {args.input}")
-    image1 = load_medical_image(args.input)
-    images.append(image1)
-    titles.append(Path(args.input).stem)
+    Args:
+        args: Parsed command-line arguments
+        config: Configuration manager
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    # Import here to avoid circular imports
+    from app.utils.patient_utils import (
+        import_patient_data, export_patient_data, 
+        list_patient_data, delete_patient_data, anonymize_patient_data
+    )
     
-    if args.compare:
-        logger.info(f"Loading comparison image from {args.compare}")
-        image2 = load_medical_image(args.compare)
-        images.append(image2)
-        titles.append(Path(args.compare).stem)
+    try:
+        if args.action == "import":
+            # Validate input path
+            if not args.input or not os.path.exists(args.input):
+                print(f"Error: Input path does not exist: {args.input}")
+                return 1
+                
+            # Parse modalities if provided
+            modalities = args.modalities.split(',') if args.modalities else None
+                
+            # Import patient data
+            result = import_patient_data(
+                args.input, 
+                anonymize=args.anonymize,
+                modalities=modalities
+            )
+            
+            print(f"Patient data imported successfully.")
+            print(f"Patient ID: {result['patient_id']}")
+            print(f"Imported files: {len(result['imported_files'])}")
+            
+            return 0
+            
+        elif args.action == "export":
+            # Validate patient ID
+            if not args.patient_id:
+                print("Error: Patient ID is required for export action")
+                return 1
+                
+            # Ensure output directory exists
+            output_dir = ensure_output_dir(args.output)
+            if not output_dir:
+                return 1
+                
+            # Parse modalities if provided
+            modalities = args.modalities.split(',') if args.modalities else None
+                
+            # Export patient data
+            result = export_patient_data(
+                args.patient_id,
+                output_dir,
+                anonymize=args.anonymize,
+                modalities=modalities
+            )
+            
+            print(f"Patient data exported successfully to: {output_dir}")
+            print(f"Exported files: {len(result['exported_files'])}")
+            
+            return 0
+            
+        elif args.action == "list":
+            # List patient data
+            if args.patient_id:
+                # List data for specific patient
+                result = list_patient_data(args.patient_id)
+                
+                print(f"Patient ID: {args.patient_id}")
+                print("Available data:")
+                for item in result:
+                    print(f"  - {item['modality']}: {item['date']} ({item['description']})")
+            else:
+                # List all patients
+                patients = list_patient_data()
+                
+                print("Available patients:")
+                for patient in patients:
+                    print(f"  - {patient['patient_id']}: {patient['name']} ({patient['study_count']} studies)")
+                    
+            return 0
+            
+        elif args.action == "delete":
+            # Validate patient ID
+            if not args.patient_id:
+                print("Error: Patient ID is required for delete action")
+                return 1
+                
+            # Delete patient data
+            result = delete_patient_data(args.patient_id)
+            
+            print(f"Patient data deleted successfully.")
+            print(f"Deleted files: {result['deleted_files']}")
+            
+            return 0
+            
+        elif args.action == "anonymize":
+            # Validate patient ID
+            if not args.patient_id:
+                print("Error: Patient ID is required for anonymize action")
+                return 1
+                
+            # Anonymize patient data
+            result = anonymize_patient_data(args.patient_id)
+            
+            print(f"Patient data anonymized successfully.")
+            print(f"Anonymized files: {result['anonymized_files']}")
+            
+            return 0
+        
+        else:
+            print(f"Error: Unknown action: {args.action}")
+            return 1
     
-    # Create visualization
-    if args.compare:
-        logger.info("Creating comparison visualization")
-        fig = plot_comparison(
-            images[0],
-            images[1],
-            slice_indices=args.slice,
-            titles=titles,
-            colormap=args.colormap,
-            window_center=args.window_center,
-            window_width=args.window_width
+    except Exception as e:
+        logging.error(f"Error during patient data management: {str(e)}", exc_info=True)
+        print(f"Error during patient data management: {str(e)}")
+        return 1
+
+
+def process_deploy_command(args, config):
+    """
+    Process deployment command.
+    
+    Args:
+        args: Parsed command-line arguments
+        config: Configuration manager
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
+    # Import here to avoid circular imports
+    from app.deployment.api_server import start_server
+    
+    try:
+        print(f"Deploying {args.model} model for {args.region} region...")
+        print(f"Server will be available at http://{args.host}:{args.port}")
+        
+        # Check if SSL is enabled
+        use_ssl = args.ssl_cert is not None and args.ssl_key is not None
+        if use_ssl:
+            print("SSL enabled")
+            
+        # Start API server
+        start_server(
+            model=args.model,
+            region=args.region,
+            host=args.host,
+            port=args.port,
+            workers=args.workers,
+            api_key=args.api_key,
+            ssl_cert=args.ssl_cert,
+            ssl_key=args.ssl_key,
+            config=config
         )
-    else:
-        logger.info("Creating single image visualization")
-        fig = plot_image_slice(
-            images[0],
-            slice_index=args.slice,
-            axis=args.axis,
-            title=titles[0],
-            colormap=args.colormap,
-            window_center=args.window_center,
-            window_width=args.window_width
-        )
-    
-    # Save or show visualization
-    if args.output:
-        logger.info(f"Saving visualization to {args.output}")
-        plt.savefig(args.output, dpi=300, bbox_inches='tight')
-    else:
-        logger.info("Displaying visualization")
-        plt.show()
-    
-    logger.info("Visualization completed successfully")
+        
+        # Note: This function should never return as it starts a server
+        # But just in case it does return, we'll consider it a success
+        return 0
+        
+    except KeyboardInterrupt:
+        print("\nServer shutdown requested via keyboard interrupt")
+        return 0
+        
+    except Exception as e:
+        logging.error(f"Error during server deployment: {str(e)}", exc_info=True)
+        print(f"Error during server deployment: {str(e)}")
+        return 1
 
 
 def main():
-    """Main function for command-line interface."""
-    # Create the top-level parser
-    parser = argparse.ArgumentParser(
-        description="MRI to synthetic CT conversion tool",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
+    """
+    Main entry point for the CLI.
     
-    # Add global arguments
-    parser.add_argument(
-        '--config',
-        help='Path to configuration file',
-        default='configs/default_config.yaml'
-    )
-    parser.add_argument(
-        '--log_level',
-        choices=['debug', 'info', 'warning', 'error', 'critical'],
-        default='info',
-        help='Logging level'
-    )
-    
-    # Create subparsers for commands
-    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
-    
-    # Preprocess command
-    preprocess_parser = subparsers.add_parser(
-        'preprocess',
-        help='Preprocess MRI images'
-    )
-    preprocess_parser.add_argument(
-        'input',
-        help='Input MRI image or DICOM directory'
-    )
-    preprocess_parser.add_argument(
-        'output',
-        help='Output preprocessed MRI image'
-    )
-    preprocess_parser.add_argument(
-        '--bias_correction',
-        action='store_true',
-        help='Apply bias field correction'
-    )
-    preprocess_parser.add_argument(
-        '--denoise',
-        action='store_true',
-        help='Apply denoising'
-    )
-    preprocess_parser.add_argument(
-        '--normalize',
-        action='store_true',
-        help='Apply intensity normalization'
-    )
-    preprocess_parser.add_argument(
-        '--resample',
-        action='store_true',
-        help='Apply resampling'
-    )
-    preprocess_parser.add_argument(
-        '--target_spacing',
-        nargs=3,
-        type=float,
-        default=[1.0, 1.0, 1.0],
-        help='Target voxel spacing for resampling (x, y, z)'
-    )
-    
-    # Segment command
-    segment_parser = subparsers.add_parser(
-        'segment',
-        help='Segment tissues in MRI images'
-    )
-    segment_parser.add_argument(
-        'input',
-        help='Input MRI image or DICOM directory'
-    )
-    segment_parser.add_argument(
-        'output',
-        help='Output segmentation image'
-    )
-    segment_parser.add_argument(
-        '--method',
-        choices=['atlas', 'deeplearning'],
-        default='deeplearning',
-        help='Segmentation method'
-    )
-    segment_parser.add_argument(
-        '--region',
-        choices=['head', 'pelvis', 'thorax'],
-        default='head',
-        help='Anatomical region'
-    )
-    
-    # Convert command
-    convert_parser = subparsers.add_parser(
-        'convert',
-        help='Convert MRI to synthetic CT'
-    )
-    convert_parser.add_argument(
-        'input',
-        help='Input MRI image or DICOM directory'
-    )
-    convert_parser.add_argument(
-        'output',
-        help='Output synthetic CT image or DICOM directory'
-    )
-    convert_parser.add_argument(
-        '--method',
-        choices=['atlas', 'cnn', 'gan'],
-        default='cnn',
-        help='Conversion method'
-    )
-    convert_parser.add_argument(
-        '--segmentation',
-        help='Input tissue segmentation (optional)'
-    )
-    convert_parser.add_argument(
-        '--model',
-        help='Path to CNN or GAN model (for CNN or GAN methods)'
-    )
-    convert_parser.add_argument(
-        '--anonymize',
-        action='store_true',
-        help='Anonymize output DICOM series'
-    )
-    
-    # Evaluate command
-    evaluate_parser = subparsers.add_parser(
-        'evaluate',
-        help='Evaluate synthetic CT against reference CT'
-    )
-    evaluate_parser.add_argument(
-        'synthetic_ct',
-        help='Input synthetic CT image or DICOM directory'
-    )
-    evaluate_parser.add_argument(
-        'reference_ct',
-        help='Reference CT image or DICOM directory'
-    )
-    evaluate_parser.add_argument(
-        '--mask',
-        help='Evaluation mask for region-specific evaluation (optional)'
-    )
-    evaluate_parser.add_argument(
-        '--metrics',
-        default='mae,mse,psnr,ssim',
-        help='Comma-separated list of metrics to compute'
-    )
-    evaluate_parser.add_argument(
-        '--report',
-        help='Path for saving visual evaluation report (optional)'
-    )
-    
-    # Visualize command
-    visualize_parser = subparsers.add_parser(
-        'visualize',
-        help='Visualize medical images'
-    )
-    visualize_parser.add_argument(
-        'input',
-        help='Input medical image or DICOM directory'
-    )
-    visualize_parser.add_argument(
-        '--compare',
-        help='Second image for comparison (optional)'
-    )
-    visualize_parser.add_argument(
-        '--output',
-        help='Output image file (optional, displays if not provided)'
-    )
-    visualize_parser.add_argument(
-        '--slice',
-        type=int,
-        default=-1,
-        help='Slice index (-1 for middle slice)'
-    )
-    visualize_parser.add_argument(
-        '--axis',
-        type=int,
-        choices=[0, 1, 2],
-        default=0,
-        help='Viewing axis (0=axial, 1=coronal, 2=sagittal)'
-    )
-    visualize_parser.add_argument(
-        '--colormap',
-        default='gray',
-        help='Colormap for visualization'
-    )
-    visualize_parser.add_argument(
-        '--window_center',
-        type=float,
-        default=None,
-        help='Window center for visualization (Hounsfield units for CT)'
-    )
-    visualize_parser.add_argument(
-        '--window_width',
-        type=float,
-        default=None,
-        help='Window width for visualization (Hounsfield units for CT)'
-    )
-    
+    Returns:
+        int: Exit code (0 for success)
+    """
     # Parse arguments
+    parser = setup_parser()
     args = parser.parse_args()
     
-    # Load configuration
-    config_manager = ConfigManager(args.config)
+    # Set up logging
+    setup_logging(level=args.log_level, log_file=args.log_file)
     
-    # Handle commands
-    if args.command == 'preprocess':
-        setup_logging(args)
-        preprocess_command(args)
-    elif args.command == 'segment':
-        setup_logging(args)
-        segment_command(args)
-    elif args.command == 'convert':
-        setup_logging(args)
-        convert_command(args)
-    elif args.command == 'evaluate':
-        setup_logging(args)
-        evaluate_command(args)
-    elif args.command == 'visualize':
-        setup_logging(args)
-        visualize_command(args)
+    # Handle no arguments case
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return 0
+    
+    # Load configuration
+    config = load_config(args.config)
+    update_config_from_args(args)
+    
+    # Process commands based on mode
+    if args.mode == "config":
+        return process_config_command(args)
+    elif args.mode == "preprocess":
+        return process_preprocess_command(args, config)
+    elif args.mode == "multi-sequence":
+        return process_multi_sequence_command(args, config)
+    elif args.mode == "segment":
+        return process_segment_command(args, config)
+    elif args.mode == "convert":
+        return process_convert_command(args, config)
+    elif args.mode == "evaluate":
+        return process_evaluate_command(args, config)
+    elif args.mode == "pipeline":
+        return process_pipeline_command(args, config)
+    elif args.mode == "visualize":
+        return process_visualize_command(args, config)
+    elif args.mode == "patient":
+        return process_patient_command(args, config)
+    elif args.mode == "deploy":
+        return process_deploy_command(args, config)
     else:
         parser.print_help()
+        return 0
 
 
 if __name__ == "__main__":
-    main() 
+    sys.exit(main()) 

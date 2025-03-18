@@ -70,4 +70,9 @@ setuptools>=58.0.0
 wheel>=0.37.0
 
 # Ghi log và theo dõi thí nghiệm
-mlflow>=1.20.0 
+mlflow>=1.20.0
+
+# Web server and API
+fastapi>=0.68.0
+uvicorn>=0.15.0
+python-multipart>=0.0.5 
