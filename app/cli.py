@@ -246,7 +246,7 @@ def process_preprocess_command(args, config):
         
         # Run preprocessing
         output_path = preprocess_mri(
-            args.input, 
+                args.input,
             output_dir,
             bias_correction=args.bias_correction if args.bias_correction else params.get('bias_field_correction', {}).get('enable', True),
             denoise=args.denoise if args.denoise else params.get('denoising', {}).get('enable', True),

@@ -566,6 +566,15 @@ def train_gan(args):
     logger.info(f"Saved final model to {final_model_path}")
     logger.info("GAN training completed.")
 
+    return {
+        'generator_path': final_model_path,
+        'discriminator_path': final_model_path,
+        'val_g_loss': val_g_loss,
+        'val_d_loss': val_d_loss,
+        'val_mae': val_mae,
+        'val_psnr': val_psnr,
+    }
+
 
 def main():
     """Main function."""
@@ -600,6 +609,98 @@ def main():
     
     # Train model
     train_gan(args)
+
+
+def train_gan_model(mri_dir, ct_dir, output_dir, region="head", batch_size=4, epochs=100, 
+                   learning_rate=0.001, use_gpu=True, lambda_l1=100, **kwargs):
+    """
+    Public interface for GAN model training that can be called from the GUI.
+    
+    Args:
+        mri_dir: Directory containing MRI images
+        ct_dir: Directory containing CT images
+        output_dir: Directory to save model and results
+        region: Anatomical region
+        batch_size: Batch size
+        epochs: Number of epochs
+        learning_rate: Learning rate
+        use_gpu: Whether to use GPU
+        lambda_l1: Weight for L1 loss in GAN (higher values focus more on realism than GAN accuracy)
+        **kwargs: Additional arguments
+        
+    Returns:
+        Dictionary with results
+    """
+    # Configure logging for GUI
+    logging.info("=== Starting GAN Training ===")
+    logging.info(f"MRI Directory: {mri_dir}")
+    logging.info(f"CT Directory: {ct_dir}")
+    logging.info(f"Output Directory: {output_dir}")
+    logging.info(f"Region: {region}")
+    logging.info(f"Batch Size: {batch_size}")
+    logging.info(f"Epochs: {epochs}")
+    logging.info(f"Learning Rate: {learning_rate}")
+    logging.info(f"Use GPU: {use_gpu}")
+    logging.info(f"Lambda L1: {lambda_l1}")
+    logging.info("-------------------------------")
+    
+    # Create args object for compatibility with existing train_gan function
+    class Args:
+        pass
+    
+    args = Args()
+    args.mri_dir = mri_dir
+    args.ct_dir = ct_dir
+    args.data_dir = Path(mri_dir).parent  # Assuming mri_dir and ct_dir are within the same parent dir
+    args.output_dir = output_dir
+    args.patch_size = kwargs.get('patch_size', 64)
+    args.batch_size = batch_size
+    args.epochs = epochs
+    args.lr = learning_rate
+    args.use_gpu = use_gpu
+    args.lambda_l1 = lambda_l1
+    args.samples_per_volume = kwargs.get('samples_per_volume', 100)
+    args.region = region
+    args.pretrained_generator = kwargs.get('pretrained_generator', None)
+    args.pretrained_discriminator = kwargs.get('pretrained_discriminator', None)
+    args.resume = kwargs.get('resume', False)
+    args.seed = kwargs.get('seed', 42)
+    args.init_features = kwargs.get('init_features', 32)
+    args.num_workers = kwargs.get('num_workers', 4)
+    args.beta1 = kwargs.get('beta1', 0.5)
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Setup log file for this training run
+    log_file = os.path.join(output_dir, f"training_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(file_handler)
+    
+    try:
+        start_time = time.time()
+        
+        # Call the existing train_gan function
+        results = train_gan(args)
+        
+        # Add training time to results
+        training_time = time.time() - start_time
+        results['training_time'] = training_time
+        
+        logging.info(f"Training completed in {training_time:.2f} seconds")
+        logging.info(f"Generator model saved to: {results['generator_path']}")
+        logging.info(f"Discriminator model saved to: {results['discriminator_path']}")
+        
+        return results
+    
+    except Exception as e:
+        error_msg = f"Error during GAN model training: {str(e)}"
+        logging.error(error_msg)
+        raise ValueError(error_msg)
+    finally:
+        # Clean up the file handler
+        logger.removeHandler(file_handler)
 
 
 if __name__ == "__main__":

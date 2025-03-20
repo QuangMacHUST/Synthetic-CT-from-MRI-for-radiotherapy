@@ -279,7 +279,7 @@ def plot_slice(image_path, output_path=None, orientation='axial', slice_idx=None
         plt.tight_layout()
         plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
         plt.close(fig)
-        return output_path
+    return output_path
     else:
         plt.tight_layout()
         return fig, ax
@@ -376,8 +376,8 @@ def plot_comparison(mri, ct, segmentation=None, synthetic_ct=None, orientation='
             im = axes[3].imshow(diff_slice, cmap='RdBu_r', vmin=-diff_max, vmax=diff_max)
             axes[3].set_title('Difference')
             axes[3].axis('off')
-            
-            # Add colorbar
+    
+    # Add colorbar
             plt.colorbar(im, ax=axes[3], label='HU Difference')
     
     # Save or display
@@ -388,9 +388,9 @@ def plot_comparison(mri, ct, segmentation=None, synthetic_ct=None, orientation='
         plt.close(fig)
         return output_path
     else:
-        plt.tight_layout()
+    plt.tight_layout()
         return fig, axes
-
+    
 
 def plot_3d_rendering(image_path, output_path=None, threshold=300, dpi=150):
     """
@@ -452,7 +452,7 @@ def plot_3d_rendering(image_path, output_path=None, threshold=300, dpi=150):
             plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
             plt.close(fig)
             return output_path
-        else:
+    else:
             return fig
             
     except ImportError as e:

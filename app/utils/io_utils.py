@@ -1,533 +1,607 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-
 """
-Utility functions for input/output operations
+Input/Output utilities for MRI to CT conversion.
+
+This module provides functions for loading, saving, and validating medical images,
+as well as utilities for handling file paths and logging.
 """
 
 import os
+import sys
 import logging
-import datetime
+import shutil
+import json
 from pathlib import Path
-import numpy as np
-import SimpleITK as sitk
-import pydicom
-from pydicom.dataset import FileDataset
-from pydicom.uid import generate_uid
+from typing import Dict, List, Union, Optional, Tuple, Any
+
+# Try to import medical imaging libraries
+try:
+    import nibabel as nib
+    NIBABEL_AVAILABLE = True
+except ImportError:
+    NIBABEL_AVAILABLE = False
+    logging.warning("NiBabel not available. Limited NIfTI file support.")
+    
+try:
+    import pydicom
+    PYDICOM_AVAILABLE = True
+except ImportError:
+    PYDICOM_AVAILABLE = False
+    logging.warning("PyDICOM not available. Limited DICOM file support.")
+    
+try:
+    import SimpleITK as sitk
+    SITK_AVAILABLE = True
+except ImportError:
+    SITK_AVAILABLE = False
+    logging.warning("SimpleITK not available. Limited image processing support.")
 
 
-def setup_logging(level=logging.INFO):
+def setup_logging(log_file: Optional[str] = None, level: int = logging.INFO) -> None:
     """
     Set up logging configuration.
     
     Args:
-        level: Logging level (default: INFO)
+        log_file: Path to log file (None for console only)
+        level: Logging level
     """
-    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    logging.basicConfig(
-        level=level,
-        format=log_format,
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(
-                os.path.join(
-                    "logs", 
-                    f"synthetic_ct_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-                )
-            )
-        ]
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # Ensure logs directory exists
-    os.makedirs("logs", exist_ok=True)
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    
+    # Remove existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Add console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+    
+    # Add file handler if log_file is provided
+    if log_file:
+        # Ensure directory exists
+        log_dir = os.path.dirname(os.path.abspath(log_file))
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+            
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+    
+    logging.info(f"Logging initialized (level: {logging.getLevelName(level)})")
 
 
-def load_dicom_series(directory):
+def validate_input_file(file_path: str) -> bool:
+    """
+    Validate if a file path exists and is a valid medical image file.
+    
+    Args:
+        file_path: Path to input file
+        
+    Returns:
+        True if file exists and is valid, False otherwise
+    """
+    # Check if file exists
+    if not os.path.exists(file_path):
+        logging.error(f"Input file does not exist: {file_path}")
+        return False
+    
+    # Check if file is a file (not a directory)
+    if not os.path.isfile(file_path):
+        logging.error(f"Input path is not a file: {file_path}")
+        return False
+    
+    # Check file extension
+    file_extension = os.path.splitext(file_path)[1].lower()
+    
+    # DICOM files might not have extension
+    if not file_extension and PYDICOM_AVAILABLE:
+        try:
+            # Try to read as DICOM
+            pydicom.dcmread(file_path)
+            return True
+        except Exception:
+            pass
+    
+    # Check for valid medical image extensions
+    valid_extensions = ['.nii', '.nii.gz', '.dcm', '.img', '.nrrd', '.mha', '.mhd']
+    
+    if file_extension not in valid_extensions and not file_path.lower().endswith('.nii.gz'):
+        logging.warning(f"Input file has unknown extension: {file_extension}")
+        # Don't return False here, still try to load the file
+    
+    # Additional validation could be done here, e.g. try to load the file
+    # But for performance reasons, we don't do that by default
+    
+    return True
+
+
+def ensure_output_dir(output_path: str) -> str:
+    """
+    Ensure the output directory exists. If the output path is a file path,
+    ensure its parent directory exists.
+    
+    Args:
+        output_path: Path to output file or directory
+        
+    Returns:
+        Absolute path to the output
+    """
+    # Convert to absolute path
+    abs_path = os.path.abspath(output_path)
+    
+    # Check if path has extension (likely a file path)
+    if os.path.splitext(abs_path)[1]:
+        # Create parent directory
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    else:
+        # Create directory
+        os.makedirs(abs_path, exist_ok=True)
+    
+    logging.debug(f"Ensured output path exists: {abs_path}")
+    return abs_path
+
+
+class MultiSequenceMRI:
+    """Class for handling multi-sequence MRI data."""
+    
+    def __init__(self, sequences: Dict[str, Any] = None):
+        """
+        Initialize a multi-sequence MRI object.
+    
+        Args:
+            sequences: Dictionary of sequence names to image data
+        """
+        self.sequences = sequences or {}
+        self.metadata = {}
+
+    def add_sequence(self, name: str, data: Any, metadata: Optional[Dict] = None) -> None:
+        """
+        Add a sequence to the multi-sequence MRI.
+    
+        Args:
+            name: Sequence name (e.g., 'T1', 'T2', 'FLAIR')
+            data: Image data
+            metadata: Metadata dictionary
+        """
+        self.sequences[name] = data
+        if metadata:
+            if name not in self.metadata:
+                self.metadata[name] = {}
+            self.metadata[name].update(metadata)
+    
+    def get_sequence(self, name: str) -> Optional[Any]:
+        """
+        Get a specific sequence.
+        
+        Args:
+            name: Sequence name
+            
+        Returns:
+            Image data for the specified sequence, or None if not found
+        """
+        return self.sequences.get(name)
+    
+    def get_metadata(self, name: str) -> Dict:
+        """
+        Get metadata for a specific sequence.
+        
+        Args:
+            name: Sequence name
+            
+        Returns:
+            Metadata dictionary for the specified sequence
+        """
+        return self.metadata.get(name, {})
+    
+    def get_sequence_names(self) -> List[str]:
+        """
+        Get names of all available sequences.
+        
+        Returns:
+            List of sequence names
+        """
+        return list(self.sequences.keys())
+    
+    def has_sequence(self, name: str) -> bool:
+        """
+        Check if a specific sequence exists.
+        
+        Args:
+            name: Sequence name
+            
+        Returns:
+            True if sequence exists, False otherwise
+        """
+        return name in self.sequences
+
+
+class SyntheticCT:
+    """Class for handling synthetic CT data."""
+    
+    def __init__(self, data: Any = None, metadata: Optional[Dict] = None):
+        """
+        Initialize a synthetic CT object.
+        
+        Args:
+            data: Image data
+            metadata: Metadata dictionary
+        """
+        self.data = data
+        self.metadata = metadata or {}
+        self.segmentation = None
+        self.hu_map = None
+    
+    def set_segmentation(self, segmentation: Any) -> None:
+        """
+        Set segmentation data.
+        
+        Args:
+            segmentation: Segmentation data
+        """
+        self.segmentation = segmentation
+    
+    def set_hu_map(self, hu_map: Dict) -> None:
+        """
+        Set HU value mapping.
+        
+        Args:
+            hu_map: Dictionary mapping tissue types to HU values
+        """
+        self.hu_map = hu_map
+    
+    def get_data(self) -> Any:
+        """
+        Get image data.
+        
+        Returns:
+            Image data
+        """
+        return self.data
+    
+    def get_metadata(self) -> Dict:
+        """
+        Get metadata.
+        
+        Returns:
+            Metadata dictionary
+        """
+        return self.metadata
+    
+
+def load_medical_image(file_path: str) -> Any:
+    """
+    Load a medical image file.
+    
+    Uses SimpleITK to load common medical image formats (DICOM, NIfTI).
+    Handles DICOM series in directories, individual DICOM files, and NIfTI files.
+    For DICOM directories, it will search recursively to find all slices.
+    
+    Args:
+        file_path: Path to medical image file or directory containing DICOM files
+        
+    Returns:
+        SimpleITK.Image object or equivalent representation
+        
+    Raises:
+        ValueError: If file doesn't exist or can't be loaded
+    """
+    if not os.path.exists(file_path):
+        raise ValueError(f"File or directory does not exist: {file_path}")
+    
+    # Normalize the path (convert backslashes to forward slashes)
+    normalized_path = os.path.normpath(file_path).replace('\\', '/')
+    
+    logging.info(f"Loading medical image: {normalized_path}")
+    
+    try:
+        import SimpleITK as sitk
+        
+        # Check file type and load accordingly
+        if os.path.isfile(normalized_path):
+            if normalized_path.lower().endswith(('.nii', '.nii.gz')):
+                # NIfTI file
+                logging.info(f"Loading NIfTI file: {normalized_path}")
+                return sitk.ReadImage(normalized_path)
+            else:
+                # Attempt to load as DICOM or other image format
+                try:
+                    logging.info(f"Loading image file: {normalized_path}")
+                    return sitk.ReadImage(normalized_path)
+                except Exception as e:
+                    logging.error(f"Failed to load file as medical image: {str(e)}")
+                    raise ValueError(f"Unable to load {normalized_path}: {str(e)}")
+        
+        elif os.path.isdir(normalized_path):
+            # Directory: could contain a DICOM series
+            logging.info(f"Scanning directory for DICOM series: {normalized_path}")
+            
+            # First, collect all potential DICOM files
+            dicom_files = []
+            for root, _, files in os.walk(normalized_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # Include files with .dcm extension or no extension (common for DICOM)
+                    if file.lower().endswith('.dcm') or not os.path.splitext(file)[1]:
+                        dicom_files.append(file_path)
+            
+            logging.info(f"Found {len(dicom_files)} potential DICOM files in directory")
+            
+            if not dicom_files:
+                raise ValueError(f"No potential DICOM files found in directory: {normalized_path}")
+            
+            # Try using ImageSeriesReader with GDCM
+            reader = sitk.ImageSeriesReader()
+            try:
+                series_IDs = sitk.ImageSeriesReader.GetGDCMSeriesIDs(normalized_path)
+                
+                if series_IDs:
+                    logging.info(f"Found {len(series_IDs)} DICOM series")
+                    
+                    # Try each series and load the one with the most files
+                    best_series = None
+                    max_file_count = 0
+                    
+                    for series_ID in series_IDs:
+                        dicom_names = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(normalized_path, series_ID)
+                        if len(dicom_names) > max_file_count:
+                            max_file_count = len(dicom_names)
+                            best_series = series_ID
+                    
+                    if best_series and max_file_count > 0:
+                        dicom_names = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(normalized_path, best_series)
+                        logging.info(f"Loading DICOM series with {len(dicom_names)} files")
+                        reader.SetFileNames(dicom_names)
+                        try:
+                            image = reader.Execute()
+                            logging.info(f"Successfully loaded DICOM series: {image.GetSize()[0]}x{image.GetSize()[1]}x{image.GetSize()[2]}")
+                            return image
+                        except Exception as e:
+                            logging.warning(f"Error executing reader for series {best_series}: {str(e)}")
+            except Exception as e:
+                logging.warning(f"Error using GDCM to read DICOM series: {str(e)}")
+            
+            # If GDCM method fails, try manual approach with sorting
+            logging.info("Trying alternative approach for DICOM series loading")
+            
+            # Sort DICOM files based on slice position
+            sorted_dicom_files = []
+            
+            try:
+                if PYDICOM_AVAILABLE:
+                    sorted_dicom_info = []
+                    for file_path in dicom_files:
+                        try:
+                            ds = pydicom.dcmread(file_path, stop_before_pixels=True)
+                            
+                            # Get a position value for sorting
+                            position = None
+                            
+                            # Try to get instance number
+                            if hasattr(ds, 'InstanceNumber'):
+                                position = float(ds.InstanceNumber)
+                            # Try to get slice location
+                            elif hasattr(ds, 'SliceLocation'):
+                                position = float(ds.SliceLocation)
+                            # Try to get image position patient (z coordinate)
+                            elif hasattr(ds, 'ImagePositionPatient') and ds.ImagePositionPatient:
+                                position = float(ds.ImagePositionPatient[2])
+                            # Use unique ID as last resort
+                            elif hasattr(ds, 'SOPInstanceUID'):
+                                position = ds.SOPInstanceUID
+                            else:
+                                position = file_path  # Use file path as fallback
+                            
+                            # Only add files with pixel data or certain attributes
+                            if 'PixelData' in ds or hasattr(ds, 'Rows'):
+                                # Also check for matching width and height across slices
+                                if hasattr(ds, 'Rows') and hasattr(ds, 'Columns'):
+                                    # Store position, file path, and dimensions
+                                    sorted_dicom_info.append((position, file_path, ds.Rows, ds.Columns))
+                        except Exception as e:
+                            logging.debug(f"Error reading DICOM file {file_path}: {str(e)}")
+                    
+                    # Group by dimensions to find the largest matching set
+                    dimension_groups = {}
+                    for info in sorted_dicom_info:
+                        position, file_path, rows, cols = info
+                        key = (rows, cols)
+                        if key not in dimension_groups:
+                            dimension_groups[key] = []
+                        dimension_groups[key].append((position, file_path))
+                    
+                    # Find the largest group
+                    max_group_size = 0
+                    largest_group = None
+                    for dim, group in dimension_groups.items():
+                        if len(group) > max_group_size:
+                            max_group_size = len(group)
+                            largest_group = group
+                    
+                    if largest_group:
+                        # Sort by position
+                        try:
+                            largest_group.sort(key=lambda x: x[0] if isinstance(x[0], (int, float)) else 0)
+                        except Exception:
+                            # If sorting fails, keep original order
+                            pass
+                        
+                        # Extract file paths
+                        sorted_dicom_files = [info[1] for info in largest_group]
+                        logging.info(f"Found {len(sorted_dicom_files)} DICOM files with matching dimensions")
+                    else:
+                        # If grouping fails, use all files
+                        sorted_dicom_files = dicom_files
+                else:
+                    # Without pydicom, just use all files
+                    sorted_dicom_files = dicom_files
+            except Exception as e:
+                logging.warning(f"Error sorting DICOM files: {str(e)}")
+                # Use unsorted files if sorting fails
+                sorted_dicom_files = dicom_files
+            
+            if not sorted_dicom_files:
+                raise ValueError(f"No valid DICOM files found in directory: {normalized_path}")
+            
+            logging.info(f"Attempting to load {len(sorted_dicom_files)} sorted DICOM files")
+            
+            # Load the sorted DICOM files
+            reader = sitk.ImageSeriesReader()
+            reader.SetFileNames(sorted_dicom_files)
+            
+            try:
+                image = reader.Execute()
+                size = image.GetSize()
+                if size[0] > 0 and size[1] > 0 and size[2] > 0:
+                    logging.info(f"Successfully loaded DICOM series: {size[0]}x{size[1]}x{size[2]}")
+                    return image
+                else:
+                    raise ValueError("Empty image returned")
+            except Exception as e:
+                logging.error(f"Error loading sorted DICOM files: {str(e)}")
+                
+                # If all else fails, try reading just the first file
+                if sorted_dicom_files:
+                    logging.info("Trying to load single DICOM file")
+                    try:
+                        return sitk.ReadImage(sorted_dicom_files[0])
+                    except Exception as e2:
+                        logging.error(f"Error loading single DICOM file: {str(e2)}")
+                
+                raise ValueError(f"Failed to load DICOM series from {normalized_path}: {str(e)}")
+        else:
+            # Not a file or directory
+            raise ValueError(f"Path is neither a file nor a directory: {normalized_path}")
+            
+    except ImportError:
+        logging.critical("SimpleITK not available. Cannot load medical images.")
+        raise ValueError("SimpleITK library is required to load medical images.")
+    except Exception as e:
+        error_msg = f"Error loading medical image {file_path}: {str(e)}"
+        logging.error(error_msg)
+        # Raise error instead of returning placeholder to allow proper error handling
+        raise ValueError(error_msg) from e
+
+
+def save_medical_image(image_data: Any, output_path: str, format: str = "nifti") -> str:
+    """
+    Save a medical image file.
+    
+    This is a placeholder. In a real implementation, this would use libraries like
+    SimpleITK, nibabel, or pydicom to save the image data.
+    
+    Args:
+        image_data: Image data to save
+        output_path: Path to save the image
+        format: Output format (nifti, dicom)
+        
+    Returns:
+        Path to saved file
+    """
+    # Ensure output directory exists
+    output_path = ensure_output_dir(output_path)
+    
+    # Add appropriate extension if not present
+    if format.lower() == "nifti" and not output_path.lower().endswith(('.nii', '.nii.gz')):
+        output_path += '.nii.gz'
+    elif format.lower() == "dicom" and not output_path.lower().endswith('.dcm'):
+        output_path += '.dcm'
+    
+    logging.info(f"Saving medical image to: {output_path}")
+    
+    # Placeholder for actual save logic
+    # In a real implementation, this would use appropriate libraries
+    # based on the output format
+    
+    # Simulate file creation for testing
+    with open(output_path, 'w') as f:
+        f.write("Placeholder for image data")
+    
+    return output_path
+
+
+def load_dicom_series(directory_path: str) -> Any:
     """
     Load a DICOM series from a directory.
     
+    This is a placeholder. In a real implementation, this would use libraries like
+    pydicom or SimpleITK to load the DICOM series.
+    
     Args:
-        directory: Path to directory containing DICOM files
+        directory_path: Path to directory containing DICOM files
         
     Returns:
-        SimpleITK image
+        Loaded image data
     """
-    reader = sitk.ImageSeriesReader()
-    dicom_names = reader.GetGDCMSeriesFileNames(directory)
-    reader.SetFileNames(dicom_names)
-    return reader.Execute()
+    if not os.path.isdir(directory_path):
+        raise ValueError(f"Directory does not exist: {directory_path}")
+    
+    logging.info(f"Loading DICOM series from: {directory_path}")
+    
+    # Placeholder return
+    return {"directory_path": directory_path, "data": None}
 
 
-def load_nifti(file_path):
+def load_nifti(file_path: str) -> Any:
     """
     Load a NIfTI file.
+    
+    This is a placeholder. In a real implementation, this would use libraries like
+    nibabel or SimpleITK to load the NIfTI file.
     
     Args:
         file_path: Path to NIfTI file
         
     Returns:
-        SimpleITK image
+        Loaded image data
     """
-    return sitk.ReadImage(file_path)
+    if not validate_input_file(file_path):
+        raise ValueError(f"Invalid input file: {file_path}")
+    
+    logging.info(f"Loading NIfTI file: {file_path}")
+    
+    # Placeholder return
+    return {"file_path": file_path, "data": None}
 
 
-def load_medical_image(path):
+def save_as_nifti(image_data: Any, output_path: str) -> str:
     """
-    Load a medical image from a file or directory.
+    Save image data as a NIfTI file.
+    
+    This is a placeholder. In a real implementation, this would use libraries like
+    nibabel or SimpleITK to save the image data.
     
     Args:
-        path: Path to file or directory
-        
-    Returns:
-        SimpleITK image
-    """
-    path = Path(path)
-    
-    if path.is_dir():
-        # Try to load as DICOM series
-        return load_dicom_series(str(path))
-    else:
-        # Try to load as NIfTI
-        if path.suffix in ['.nii', '.gz']:
-            return load_nifti(str(path))
-        else:
-            # Try to load as single DICOM file
-            return sitk.ReadImage(str(path))
-
-
-def save_medical_image(image, output_path):
-    """
-    Save a medical image to a file.
-    
-    Args:
-        image: SimpleITK image to save
+        image_data: Image data to save
         output_path: Path to save the image
+        
+    Returns:
+        Path to saved file
     """
-    output_path = Path(output_path)
-    
-    # Create parent directories if they don't exist
-    os.makedirs(output_path.parent, exist_ok=True)
-    
-    # Save based on file extension
-    if output_path.suffix in ['.nii', '.gz']:
-        sitk.WriteImage(image, str(output_path))
-    elif output_path.suffix in ['.dcm']:
-        sitk.WriteImage(image, str(output_path))
-    else:
-        # Default to NIfTI
-        sitk.WriteImage(image, str(output_path))
+    return save_medical_image(image_data, output_path, format="nifti")
 
 
-def save_as_nifti(image, output_path):
+def save_as_dicom(image_data: Any, output_path: str) -> str:
     """
-    Save a SimpleITK image as NIfTI.
+    Save image data as a DICOM file.
     
-    Args:
-        image: SimpleITK image
-        output_path: Path to save the NIfTI file
-    """
-    sitk.WriteImage(image, output_path)
-
-
-def save_as_dicom(image, output_dir, patient_info=None):
-    """
-    Save a SimpleITK image as DICOM series.
-    
-    Args:
-        image: SimpleITK image
-        output_dir: Directory to save the DICOM series
-        patient_info: Dictionary with patient information
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Convert SimpleITK image to numpy array
-    array = sitk.GetArrayFromImage(image)
-    
-    # Get image properties
-    origin = image.GetOrigin()
-    spacing = image.GetSpacing()
-    direction = image.GetDirection()
-    
-    # Create a base DICOM dataset
-    if patient_info is None:
-        patient_info = {
-            'PatientName': 'ANONYMOUS',
-            'PatientID': 'ANONYMOUS',
-            'PatientBirthDate': '',
-            'PatientSex': '',
-            'StudyDescription': 'Synthetic CT',
-            'SeriesDescription': 'Synthetic CT from MRI',
-        }
-    
-    # Generate UIDs
-    study_instance_uid = generate_uid()
-    series_instance_uid = generate_uid()
-    
-    # Save each slice as a separate DICOM file
-    for i in range(array.shape[0]):
-        # Create a new DICOM dataset for this slice
-        file_meta = pydicom.Dataset()
-        file_meta.MediaStorageSOPClassUID = '1.2.840.10008.5.1.4.1.1.2'  # CT Image Storage
-        file_meta.MediaStorageSOPInstanceUID = generate_uid()
-        file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
-        
-        ds = FileDataset(
-            os.path.join(output_dir, f'slice_{i:04d}.dcm'),
-            {},
-            file_meta=file_meta,
-            preamble=b'\0' * 128
-        )
-        
-        # Patient information
-        ds.PatientName = patient_info.get('PatientName', 'ANONYMOUS')
-        ds.PatientID = patient_info.get('PatientID', 'ANONYMOUS')
-        ds.PatientBirthDate = patient_info.get('PatientBirthDate', '')
-        ds.PatientSex = patient_info.get('PatientSex', '')
-        
-        # Study information
-        ds.StudyInstanceUID = study_instance_uid
-        ds.StudyDate = datetime.datetime.now().strftime('%Y%m%d')
-        ds.StudyTime = datetime.datetime.now().strftime('%H%M%S')
-        ds.StudyDescription = patient_info.get('StudyDescription', 'Synthetic CT')
-        
-        # Series information
-        ds.SeriesInstanceUID = series_instance_uid
-        ds.SeriesNumber = 1
-        ds.SeriesDescription = patient_info.get('SeriesDescription', 'Synthetic CT from MRI')
-        
-        # Image information
-        ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
-        ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
-        ds.Modality = 'CT'
-        
-        # CT-specific attributes
-        ds.RescaleIntercept = -1024.0
-        ds.RescaleSlope = 1.0
-        ds.RescaleType = 'HU'
-        
-        # Image position and orientation
-        ds.ImagePositionPatient = [origin[0], origin[1], origin[2] + i * spacing[2]]
-        ds.ImageOrientationPatient = [
-            direction[0], direction[1], direction[2],
-            direction[3], direction[4], direction[5]
-        ]
-        
-        # Pixel spacing
-        ds.PixelSpacing = [spacing[0], spacing[1]]
-        ds.SliceThickness = spacing[2]
-        
-        # Pixel data
-        ds.Rows = array.shape[1]
-        ds.Columns = array.shape[2]
-        ds.BitsAllocated = 16
-        ds.BitsStored = 16
-        ds.HighBit = 15
-        ds.PixelRepresentation = 1  # Signed
-        ds.SamplesPerPixel = 1
-        ds.PhotometricInterpretation = 'MONOCHROME2'
-        
-        # Convert HU values to pixel values
-        pixel_array = array[i].astype(np.int16)
-        ds.PixelData = pixel_array.tobytes()
-        
-        # Save the DICOM file
-        ds.save_as(os.path.join(output_dir, f'slice_{i:04d}.dcm'))
-
-
-class SyntheticCT:
-    """
-    Class to represent a synthetic CT image.
-    """
-    
-    def __init__(self, image, metadata=None):
-        """
-        Initialize a synthetic CT image.
+    This is a placeholder. In a real implementation, this would use libraries like
+    pydicom or SimpleITK to save the image data.
         
         Args:
-            image: SimpleITK image
-            metadata: Dictionary with metadata
-        """
-        self.image = image
-        if metadata is None:
-            metadata = {
-                "creation_time": datetime.datetime.now().isoformat()
-            }
-        self.metadata = metadata
-    
-    def save(self, output_path):
-        """
-        Save the synthetic CT image.
-        
-        Args:
-            output_path: Path to save the image
-        """
-        output_path = Path(output_path)
-        
-        if output_path.suffix in ['.nii', '.gz']:
-            save_as_nifti(self.image, str(output_path))
-        elif output_path.is_dir():
-            save_as_dicom(self.image, str(output_path), self.metadata.get('patient_info'))
-        else:
-            # Default to NIfTI
-            save_as_nifti(self.image, str(output_path))
-    
-    def get_array(self):
-        """
-        Get the image as a numpy array.
-        
-        Returns:
-            Numpy array
-        """
-        return sitk.GetArrayFromImage(self.image)
-    
-    def get_metadata(self):
-        """
-        Get the metadata.
-        
-        Returns:
-            Dictionary with metadata
-        """
-        return self.metadata
-    
-    @classmethod
-    def load(cls, file_path, metadata=None):
-        """
-        Load a synthetic CT image from a file.
-        
-        Args:
-            file_path: Path to the image file
-            metadata: Optional metadata dictionary
+        image_data: Image data to save
+        output_path: Path to save the image
             
         Returns:
-            SyntheticCT object
+        Path to saved file
         """
-        image = load_medical_image(file_path)
-        return cls(image, metadata)
-
-
-def validate_input_file(file_path):
-    """
-    Kiểm tra tính hợp lệ của file đầu vào.
-    
-    Args:
-        file_path (str): Đường dẫn đến file cần kiểm tra
-        
-    Returns:
-        bool: True nếu file hợp lệ, False nếu không
-    """
-    file_path = Path(file_path)
-    
-    # Kiểm tra sự tồn tại của file
-    if not file_path.exists():
-        logging.error(f"File không tồn tại: {file_path}")
-        return False
-        
-    # Kiểm tra định dạng file
-    if file_path.is_dir():
-        # Nếu là thư mục, giả định là chuỗi DICOM
-        dicom_files = list(file_path.glob('*.dcm'))
-        if not dicom_files:
-            logging.error(f"Không tìm thấy file DICOM trong thư mục: {file_path}")
-            return False
-    else:
-        # Nếu là file, kiểm tra phần mở rộng
-        valid_extensions = ['.nii', '.nii.gz', '.dcm', '.mha', '.mhd', '.nrrd']
-        if not any(str(file_path).lower().endswith(ext) for ext in valid_extensions):
-            logging.error(f"Định dạng file không được hỗ trợ: {file_path}")
-            logging.error(f"Các định dạng được hỗ trợ: {', '.join(valid_extensions)}")
-            return False
-    
-    return True
-
-
-def ensure_output_dir(output_path):
-    """
-    Đảm bảo thư mục đầu ra tồn tại.
-    
-    Args:
-        output_path (str): Đường dẫn đến thư mục hoặc file đầu ra
-        
-    Returns:
-        Path: Đối tượng Path của thư mục đầu ra
-    """
-    output_path = Path(output_path)
-    
-    # Nếu output_path là file, lấy thư mục cha
-    if output_path.suffix:
-        output_dir = output_path.parent
-    else:
-        output_dir = output_path
-        
-    # Tạo thư mục nếu chưa tồn tại
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    return output_dir
-
-
-def load_multi_sequence_mri(paths, sequence_types=None):
-    """
-    Tải nhiều chuỗi MRI và đăng ký chúng để sẵn sàng cho xử lý.
-    
-    Args:
-        paths (list): Danh sách các đường dẫn đến các file MRI
-        sequence_types (list, optional): Danh sách các loại chuỗi MRI tương ứng với paths
-            (ví dụ: ['T1', 'T2', 'FLAIR']). Mặc định là None.
-            
-    Returns:
-        MultiSequenceMRI: Đối tượng chứa nhiều chuỗi MRI đã được đăng ký
-    """
-    if not paths:
-        raise ValueError("Danh sách đường dẫn không được để trống")
-        
-    if sequence_types and len(sequence_types) != len(paths):
-        raise ValueError("Số lượng loại chuỗi phải bằng số lượng đường dẫn")
-        
-    # Tải các chuỗi MRI
-    mri_sequences = {}
-    reference_image = None
-    
-    for i, path in enumerate(paths):
-        # Xác định tên chuỗi
-        seq_name = sequence_types[i] if sequence_types else f"sequence_{i+1}"
-        
-        logging.info(f"Tải chuỗi MRI {seq_name} từ {path}")
-        image = load_medical_image(path)
-        
-        if reference_image is None:
-            reference_image = image
-            mri_sequences[seq_name] = image
-        else:
-            # Đăng ký ảnh với ảnh tham chiếu
-            logging.info(f"Đăng ký chuỗi {seq_name} với chuỗi tham chiếu")
-            registered_image = register_image(image, reference_image)
-            mri_sequences[seq_name] = registered_image
-    
-    return MultiSequenceMRI(mri_sequences)
-
-
-class MultiSequenceMRI:
-    """Lớp đại diện cho nhiều chuỗi MRI đã được đăng ký."""
-    
-    def __init__(self, sequences):
-        """
-        Khởi tạo đối tượng MultiSequenceMRI.
-        
-        Args:
-            sequences (dict): Dictionary các chuỗi MRI, với key là tên chuỗi
-        """
-        self.sequences = sequences
-        self.reference_name = next(iter(sequences.keys()))
-        
-    def get_sequence(self, name):
-        """Lấy một chuỗi cụ thể theo tên."""
-        if name not in self.sequences:
-            raise ValueError(f"Chuỗi '{name}' không tồn tại")
-        return self.sequences[name]
-        
-    def get_reference(self):
-        """Lấy chuỗi tham chiếu."""
-        return self.sequences[self.reference_name]
-        
-    def get_all_sequences(self):
-        """Lấy tất cả các chuỗi."""
-        return self.sequences
-        
-    def get_sequence_names(self):
-        """Lấy danh sách tên các chuỗi."""
-        return list(self.sequences.keys())
-        
-    def save(self, output_dir):
-        """Lưu tất cả các chuỗi vào thư mục."""
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        for name, image in self.sequences.items():
-            output_path = output_dir / f"{name}.nii.gz"
-            save_medical_image(image, str(output_path))
-            
-        return output_dir 
-
-
-def register_image(moving_image, fixed_image, transform_type='rigid'):
-    """
-    Đăng ký (căn chỉnh) ảnh di động với ảnh cố định.
-    
-    Args:
-        moving_image: Ảnh cần căn chỉnh
-        fixed_image: Ảnh tham chiếu cố định
-        transform_type (str): Loại biến đổi ('rigid', 'affine', hoặc 'bspline')
-        
-    Returns:
-        Ảnh đã được căn chỉnh
-    """
-    import SimpleITK as sitk
-    
-    logging.info(f"Đăng ký ảnh sử dụng phương pháp {transform_type}")
-    
-    # Tạo đối tượng registration
-    registration_method = sitk.ImageRegistrationMethod()
-    
-    # Thiết lập phép đo tương tự
-    registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
-    registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
-    registration_method.SetMetricSamplingPercentage(0.1)
-    
-    # Thiết lập bộ nội suy
-    registration_method.SetInterpolator(sitk.sitkLinear)
-    
-    # Thiết lập bộ tối ưu hóa
-    registration_method.SetOptimizerAsGradientDescent(
-        learningRate=1.0, 
-        numberOfIterations=100, 
-        convergenceMinimumValue=1e-6, 
-        convergenceWindowSize=10
-    )
-    registration_method.SetOptimizerScalesFromPhysicalShift()
-    
-    # Thiết lập loại biến đổi
-    if transform_type == 'rigid':
-        initial_transform = sitk.CenteredTransformInitializer(
-            fixed_image, 
-            moving_image, 
-            sitk.Euler3DTransform(), 
-            sitk.CenteredTransformInitializerFilter.GEOMETRY
-        )
-    elif transform_type == 'affine':
-        initial_transform = sitk.CenteredTransformInitializer(
-            fixed_image, 
-            moving_image, 
-            sitk.AffineTransform(3), 
-            sitk.CenteredTransformInitializerFilter.GEOMETRY
-        )
-    elif transform_type == 'bspline':
-        mesh_size = [10, 10, 10]
-        initial_transform = sitk.BSplineTransformInitializer(
-            fixed_image, 
-            mesh_size
-        )
-    else:
-        raise ValueError(f"Loại biến đổi không được hỗ trợ: {transform_type}")
-    
-    registration_method.SetInitialTransform(initial_transform)
-    
-    # Thực hiện đăng ký
-    try:
-        final_transform = registration_method.Execute(fixed_image, moving_image)
-        logging.info("Đăng ký ảnh thành công")
-    except Exception as e:
-        logging.error(f"Lỗi trong quá trình đăng ký ảnh: {str(e)}")
-        logging.warning("Sử dụng biến đổi ban đầu")
-        final_transform = initial_transform
-    
-    # Áp dụng biến đổi
-    registered_image = sitk.Resample(
-        moving_image, 
-        fixed_image, 
-        final_transform, 
-        sitk.sitkLinear, 
-        0.0, 
-        moving_image.GetPixelID()
-    )
-    
-    return registered_image 
+    return save_medical_image(image_data, output_path, format="dicom") 

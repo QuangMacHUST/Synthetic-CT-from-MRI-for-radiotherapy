@@ -500,6 +500,14 @@ def train_model(args):
     logger.info(f"Saved final model to {final_model_path}")
     logger.info("Training completed.")
 
+    return {
+        'model_path': final_model_path,
+        'val_loss': val_loss,
+        'val_mae': val_mae,
+        'val_psnr': val_psnr,
+        'training_time': time.time() - start_time
+    }
+
 
 def main():
     """Main function."""
@@ -532,6 +540,90 @@ def main():
     
     # Train model
     train_model(args)
+
+
+def train_cnn_model(mri_dir, ct_dir, output_dir, region="head", batch_size=4, epochs=100, 
+                   learning_rate=0.001, use_gpu=True, **kwargs):
+    """
+    Public interface for CNN model training that can be called from the GUI.
+    
+    Args:
+        mri_dir: Directory containing MRI images
+        ct_dir: Directory containing CT images
+        output_dir: Directory to save model and results
+        region: Anatomical region
+        batch_size: Batch size
+        epochs: Number of epochs
+        learning_rate: Learning rate
+        use_gpu: Whether to use GPU
+        **kwargs: Additional arguments
+        
+    Returns:
+        Dictionary with results
+    """
+    # Configure logging for GUI
+    logging.info("=== Starting CNN Training ===")
+    logging.info(f"MRI Directory: {mri_dir}")
+    logging.info(f"CT Directory: {ct_dir}")
+    logging.info(f"Output Directory: {output_dir}")
+    logging.info(f"Region: {region}")
+    logging.info(f"Batch Size: {batch_size}")
+    logging.info(f"Epochs: {epochs}")
+    logging.info(f"Learning Rate: {learning_rate}")
+    logging.info(f"Use GPU: {use_gpu}")
+    logging.info("-------------------------------")
+    
+    # Create args object for compatibility with existing train_model function
+    class Args:
+        pass
+    
+    args = Args()
+    args.data_dir = Path(mri_dir).parent  # Assuming mri_dir and ct_dir are within the same parent dir
+    args.output_dir = output_dir
+    args.patch_size = kwargs.get('patch_size', 64)
+    args.batch_size = batch_size
+    args.epochs = epochs
+    args.lr = learning_rate
+    args.no_cuda = not use_gpu
+    args.samples_per_volume = kwargs.get('samples_per_volume', 100)
+    args.region = region
+    args.pretrained = kwargs.get('pretrained', None)
+    args.resume = kwargs.get('resume', False)
+    args.seed = kwargs.get('seed', 42)
+    args.val_split = kwargs.get('val_split', 0.2)
+    args.test_split = kwargs.get('test_split', 0.1)
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Setup log file for this training run
+    log_file = os.path.join(output_dir, f"training_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(file_handler)
+    
+    try:
+        start_time = time.time()
+        
+        # Call the existing train_model function
+        results = train_model(args)
+        
+        # Add training time to results
+        training_time = time.time() - start_time
+        results['training_time'] = training_time
+        
+        logging.info(f"Training completed in {training_time:.2f} seconds")
+        logging.info(f"Model saved to: {results['model_path']}")
+        
+        return results
+    
+    except Exception as e:
+        error_msg = f"Error during CNN model training: {str(e)}"
+        logging.error(error_msg)
+        raise ValueError(error_msg)
+    finally:
+        # Clean up the file handler
+        logger.removeHandler(file_handler)
 
 
 if __name__ == "__main__":

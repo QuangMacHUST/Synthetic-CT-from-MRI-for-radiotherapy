@@ -13,7 +13,7 @@ import logging
 import datetime
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Tuple, Optional, Union, Any
 
 import numpy as np
 import pydicom
@@ -779,4 +779,56 @@ def anonymize_dicom_directory(input_dir: str, output_dir: str) -> None:
             ds.save_as(output_path)
             
         except Exception as e:
-            logger.warning(f"Could not anonymize {file_path}: {str(e)}") 
+            logger.warning(f"Could not anonymize {file_path}: {str(e)}")
+
+
+def find_dicom_files(directory_path: str, recursive: bool = True) -> List[str]:
+    """
+    Find DICOM files in a directory.
+    
+    Args:
+        directory_path: Path to directory containing DICOM files
+        recursive: Whether to search recursively in subdirectories
+        
+    Returns:
+        List of paths to DICOM files
+    """
+    logger.info(f"Searching for DICOM files in {directory_path}")
+    
+    dicom_files = []
+    
+    try:
+        if recursive:
+            # Walk through directory tree
+            for root, _, files in os.walk(directory_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        # Try to read as DICOM
+                        pydicom.dcmread(file_path, stop_before_pixels=True)
+                        dicom_files.append(file_path)
+                    except:
+                        # Not a DICOM file or error reading
+                        continue
+        else:
+            # Only search in the given directory
+            for file in os.listdir(directory_path):
+                file_path = os.path.join(directory_path, file)
+                if os.path.isfile(file_path):
+                    try:
+                        # Try to read as DICOM
+                        pydicom.dcmread(file_path, stop_before_pixels=True)
+                        dicom_files.append(file_path)
+                    except:
+                        # Not a DICOM file or error reading
+                        continue
+        
+        # Sort files to ensure consistent ordering
+        dicom_files.sort()
+        
+        logger.info(f"Found {len(dicom_files)} DICOM files in {directory_path}")
+        return dicom_files
+    
+    except Exception as e:
+        logger.error(f"Error searching for DICOM files: {str(e)}")
+        raise ValueError(f"Failed to search for DICOM files in {directory_path}: {str(e)}") 

@@ -22,7 +22,7 @@ from app.core.preprocessing import preprocess_mri
 from app.core.segmentation import segment_tissues
 from app.core.conversion import convert_mri_to_ct
 from app.core.evaluation import evaluate_synthetic_ct
-from app.utils.config_utils import load_config
+from app.utils.config_utils import get_config, update_config_from_args, ConfigManager
 
 
 def parse_arguments():
@@ -158,6 +158,23 @@ def parse_arguments():
         help="Đường dẫn đến CT thực để so sánh (nếu có)"
     )
     
+    # Subparser for 'gui' mode
+    gui_parser = subparsers.add_parser('gui', help='Khởi động giao diện đồ họa')
+    gui_parser.add_argument(
+        "--theme", 
+        type=str, 
+        choices=['light', 'dark', 'system'],
+        default='system',
+        help="Chủ đề giao diện (light, dark, system)"
+    )
+    gui_parser.add_argument(
+        "--log-level", 
+        type=str,
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+        default='INFO',
+        help="Mức độ ghi log"
+    )
+    
     args = parser.parse_args()
     
     # Kiểm tra nếu không có chế độ nào được chọn
@@ -169,49 +186,71 @@ def parse_arguments():
 
 
 def main():
-    """Main function."""
-    # Parse arguments
+    """Main entry point."""
+    # Parse command line arguments
     args = parse_arguments()
     
-    # Setup logging
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    setup_logging(log_level)
-    
-    # Load configuration
-    config = load_config(args.config) if hasattr(args, 'config') and args.config else load_config()
-    
-    logging.info(f"Chế độ: {args.mode}")
-    logging.info(f"File đầu vào: {args.input}")
-    logging.info(f"Đường dẫn đầu ra: {args.output}")
+    # Set up logging
+    log_level = getattr(logging, args.log_level) if hasattr(args, 'log_level') else logging.INFO
+    setup_logging(level=log_level)
     
     try:
-        # Kiểm tra file đầu vào
-        if not validate_input_file(args.input):
-            logging.error(f"File đầu vào không hợp lệ hoặc không tồn tại: {args.input}")
-            return 1
-            
-        # Đảm bảo thư mục đầu ra tồn tại
-        ensure_output_dir(args.output)
+        # Load configuration
+        config = get_config()
         
-        # Xử lý theo chế độ được chọn
+        # Update configuration from args
+        if hasattr(args, 'config') and args.config:
+            # If a specific config file was provided, load it
+            config = ConfigManager(args.config).config
+            
+        # Update config with command line arguments
+        config = update_config_from_args(args)
+        
+        logging.info(f"Chế độ: {args.mode}")
+        
+        # Validate input files if applicable
+        if hasattr(args, 'input') and args.input:
+            logging.info(f"File đầu vào: {args.input}")
+            if not validate_input_file(args.input):
+                logging.error(f"File đầu vào không hợp lệ hoặc không tồn tại: {args.input}")
+                return 1
+                
+        # Ensure output directory exists if applicable
+        if hasattr(args, 'output') and args.output:
+            logging.info(f"Đường dẫn đầu ra: {args.output}")
+            ensure_output_dir(args.output)
+        
+        # Route to appropriate handler based on mode
         if args.mode == 'preprocess':
-            return handle_preprocess(args, config)
+            logging.info("Tiến hành tiền xử lý ảnh MRI")
+            handle_preprocess(args, config)
         elif args.mode == 'segment':
-            return handle_segment(args, config)
+            logging.info("Tiến hành phân đoạn mô từ ảnh MRI")
+            handle_segment(args, config)
         elif args.mode == 'convert':
-            return handle_convert(args, config)
+            logging.info("Tiến hành chuyển đổi ảnh MRI thành synthetic CT")
+            handle_convert(args, config)
         elif args.mode == 'evaluate':
-            return handle_evaluate(args, config)
+            logging.info("Tiến hành đánh giá synthetic CT")
+            handle_evaluate(args, config)
         elif args.mode == 'pipeline':
-            return handle_pipeline(args, config)
+            logging.info("Tiến hành toàn bộ pipeline chuyển đổi")
+            handle_pipeline(args, config)
+        elif args.mode == 'gui':
+            logging.info("Khởi động giao diện đồ họa")
+            from app.gui.run import main as run_gui
+            theme = args.theme if hasattr(args, 'theme') else 'system'
+            run_gui(theme=theme)
         else:
             logging.error(f"Chế độ không được hỗ trợ: {args.mode}")
-            return 1
+            sys.exit(1)
             
+        logging.info("Hoàn thành xử lý")
+        return 0
+        
     except Exception as e:
-        logging.error(f"Lỗi trong quá trình thực hiện: {str(e)}")
-        if args.verbose:
-            traceback.print_exc()
+        logging.error(f"Lỗi: {str(e)}")
+        logging.debug(traceback.format_exc())
         return 1
 
 

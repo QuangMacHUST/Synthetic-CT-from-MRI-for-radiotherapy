@@ -12,18 +12,25 @@ import os
 import logging
 import numpy as np
 import SimpleITK as sitk
-import tensorflow as tf
 from typing import Dict, Any, Optional, List, Union, Tuple
 from pathlib import Path
 
+# Wrap TensorFlow import in try-except
+try:
+    import tensorflow as tf
+    TENSORFLOW_AVAILABLE = True
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
+    logging.warning("TensorFlow not available. Some conversion methods may not work.")
+
 from app.utils.io_utils import SyntheticCT
-from app.utils.config_utils import load_config
+from app.utils.config_utils import get_config
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
 # Load configuration
-config = load_config()
+config = get_config()
 
 
 class AtlasBasedConverter:
@@ -373,13 +380,11 @@ class CNNConverter:
         self.model = self._load_model()
     
     def _load_model(self):
-        """
-        Load CNN model.
-        
-        Returns:
-            TensorFlow model
-        """
+        """Load CNN model for MRI to CT conversion."""
         try:
+            if not TENSORFLOW_AVAILABLE:
+                raise ImportError("TensorFlow is not available")
+                
             logger.info(f"Loading CNN model from {self.model_path}")
             model = tf.keras.models.load_model(self.model_path)
             logger.info("CNN model loaded successfully")
@@ -510,7 +515,7 @@ class GANConverter:
         self.region = region
         
         # Get configuration
-        self.config = config or load_config()
+        self.config = config or get_config()
         gan_config = self.config.get('conversion', {}).get('gan', {}).get(region, {})
         
         # Determine whether to use 3D GAN or 2D slice-by-slice
@@ -532,7 +537,7 @@ class GANConverter:
             self.stride = gan_config.get('stride', [128, 128, 16])
         else:
             self.input_shape = gan_config.get('input_shape', [256, 256, 1])
-            
+        
         # Load generator model
         logger.info(f"Loading GAN generator model from {self.generator_path}")
         self.generator = self._load_generator()
@@ -544,8 +549,9 @@ class GANConverter:
     def _load_generator(self):
         """Load the pre-trained generator model."""
         try:
-            import tensorflow as tf
-            
+            if not TENSORFLOW_AVAILABLE:
+                raise ImportError("TensorFlow is not available")
+                
             # Custom objects for loading the model if needed
             custom_objects = {
                 # Define any custom layers or losses here if needed
@@ -810,7 +816,7 @@ class GANConverter:
                     input_patch = tf.concat([mri_patch, tf.expand_dims(seg_patch, axis=-1)], axis=-1)
             else:
                 input_patch = mri_patch
-                
+            
             # Apply generator
             logger.debug(f"Processing 3D patch at ({z_start}-{z_end}, {y_start}-{y_end}, {x_start}-{x_end})")
             ct_patch = self.generator.predict(input_patch)

@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from app.gui.main_window import MainWindow
+"""GUI module for Synthetic CT application"""
 
-__all__ = ['MainWindow'] 
+from app.gui.enhanced_gui import EnhancedMainWindow
+
+__all__ = ['EnhancedMainWindow'] 

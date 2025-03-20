@@ -14,6 +14,15 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, List
 
+# Import default region parameters from separate file
+try:
+    from app.utils.default_region_params import DEFAULT_REGION_PARAMS
+except ImportError:
+    # Define DEFAULT_REGION_PARAMS here if import fails
+    from copy import deepcopy
+    DEFAULT_REGION_PARAMS = {}
+    logging.warning("Could not import DEFAULT_REGION_PARAMS from default_region_params.py")
+
 # Set up logger
 logger = logging.getLogger(__name__)
 
@@ -24,73 +33,290 @@ DEFAULT_CONFIG_PATH = os.path.join(
     "default_config.yaml"
 )
 
+# Default region-specific parameters
+DEFAULT_REGION_PARAMS = {
+    "brain": {
+        "window_width": 80,
+        "window_level": 40,
+        "tissue_classes": ["csf", "gray_matter", "white_matter", "bone", "air"],
+        "hu_ranges": {
+            "csf": [-10, 15],
+            "gray_matter": [20, 40],
+            "white_matter": [30, 45],
+            "bone": [400, 1000],
+            "air": [-1000, -800]
+        },
+        "segmentation_method": "threshold",
+        "registration_params": {
+            "transform_type": "rigid",
+            "metric": "mutual_information",
+            "optimizer": "gradient_descent",
+            "sampling_percentage": 0.1
+        }
+    },
+    "head_neck": {
+        "window_width": 350,
+        "window_level": 40,
+        "tissue_classes": ["soft_tissue", "bone", "air", "fat"],
+        "hu_ranges": {
+            "soft_tissue": [-100, 100],
+            "bone": [300, 1500],
+            "air": [-1000, -800],
+            "fat": [-120, -80]
+        },
+        "segmentation_method": "atlas",
+        "registration_params": {
+            "transform_type": "affine",
+            "metric": "mutual_information",
+            "optimizer": "gradient_descent",
+            "sampling_percentage": 0.1
+        }
+    },
+    "pelvis": {
+        "window_width": 400,
+        "window_level": 40,
+        "tissue_classes": ["soft_tissue", "bone", "air", "fat"],
+        "hu_ranges": {
+            "soft_tissue": [-100, 100],
+            "bone": [200, 1200],
+            "air": [-1000, -800],
+            "fat": [-120, -80]
+        },
+        "segmentation_method": "deep_learning",
+        "registration_params": {
+            "transform_type": "bspline",
+            "metric": "mutual_information",
+            "optimizer": "gradient_descent",
+            "sampling_percentage": 0.1
+        }
+    },
+    "abdomen": {
+        "window_width": 400,
+        "window_level": 40,
+        "tissue_classes": ["soft_tissue", "bone", "air", "fat", "liver", "kidney"],
+        "hu_ranges": {
+            "soft_tissue": [-100, 100],
+            "bone": [200, 1200],
+            "air": [-1000, -800],
+            "fat": [-120, -80],
+            "liver": [40, 60],
+            "kidney": [20, 40]
+        },
+        "segmentation_method": "atlas",
+        "registration_params": {
+            "transform_type": "affine",
+            "metric": "mutual_information",
+            "optimizer": "gradient_descent",
+            "sampling_percentage": 0.1
+        }
+    },
+    "thorax": {
+        "window_width": 1500,
+        "window_level": -600,
+        "tissue_classes": ["soft_tissue", "bone", "air", "fat", "lung"],
+        "hu_ranges": {
+            "soft_tissue": [-100, 100],
+            "bone": [200, 1200],
+            "air": [-1000, -800],
+            "fat": [-120, -80],
+            "lung": [-950, -750]
+        },
+        "segmentation_method": "atlas",
+        "registration_params": {
+            "transform_type": "affine",
+            "metric": "mutual_information",
+            "optimizer": "gradient_descent",
+            "sampling_percentage": 0.1
+        }
+    }
+}
+
 
 class ConfigManager:
     """Manage application configuration."""
     
     def __init__(self, config_path=None):
         """
-        Initialize ConfigManager.
+        Initialize configuration manager.
         
         Args:
             config_path: Path to configuration file (None to use default)
         """
-        self.config_path = config_path
-        self.config = {}
-        self.load_config()
+        self.config_path = config_path if config_path else DEFAULT_CONFIG_PATH
+        self.config = self._load_config()
         
-    def load_config(self):
-        """Load configuration from file."""
-        # Start with default configuration
-        default_config = self._load_yaml_config(DEFAULT_CONFIG_PATH)
+    def _load_config(self):
+        """
+        Load configuration from file.
         
-        # Override with user configuration if provided
-        if self.config_path and os.path.exists(self.config_path):
-            user_config = self._load_yaml_config(self.config_path)
-            self.config = self._deep_update(default_config, user_config)
-        else:
-            self.config = default_config
+        Returns:
+            Loaded configuration
+        """
+        # Create default config if not exists
+        if not os.path.exists(self.config_path):
+            logger.warning(f"Config file not found: {self.config_path}")
+            logger.info("Creating default configuration")
             
-        return self.config
-    
-    def _load_yaml_config(self, file_path):
-        """Load YAML configuration file."""
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+            
+            # Create default config
+            default_config = self._create_default_config()
+            
+            # Save default config
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(default_config, f, default_flow_style=False, sort_keys=False)
+                
+            return default_config
+            
+        # Load existing config
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
-            logger.info(f"Loaded configuration from {file_path}")
+            logger.info(f"Loaded configuration from {self.config_path}")
             return config
         except Exception as e:
-            logger.error(f"Error loading configuration from {file_path}: {str(e)}")
-            if file_path == DEFAULT_CONFIG_PATH:
-                logger.critical("Failed to load default configuration. Using empty configuration.")
-                return {}
-            else:
-                logger.warning("Using default configuration.")
-                return self._load_yaml_config(DEFAULT_CONFIG_PATH)
+            logger.error(f"Error loading configuration from {self.config_path}: {str(e)}")
+            logger.info("Using default configuration")
+            return self._create_default_config()
     
-    def _deep_update(self, d1, d2):
+    def _create_default_config(self):
         """
-        Recursively update dictionary d1 with values from d2.
+        Create default configuration.
+        
+        Returns:
+            Default configuration
+        """
+        return {
+            "app": {
+                "name": "Synthetic CT Generator",
+                "version": "1.0.0",
+                "description": "Generate synthetic CT images from MRI",
+                "debug": False,
+                "log_level": "INFO",
+                "data_dir": "data",
+                "output_dir": "output",
+                "models_dir": "models",
+            },
+            "preprocessing": {
+                "bias_field": {
+                    "enable": True,
+                    "shrink_factor": 4,
+                    "iterations": 50
+                },
+                "denoising": {
+                    "enable": True,
+                    "method": "gaussian",
+                    "sigma": 0.5
+                },
+                "normalization": {
+                    "enable": True,
+                    "method": "minmax",
+                    "min": 0,
+                    "max": 1000
+                }
+            },
+            "segmentation": {
+                "method": "auto",
+                "tissues": ["background", "air", "soft_tissue", "bone", "fat", "csf"]
+            },
+            "conversion": {
+                "method": "atlas",
+                "region": "head",
+                "batch_size": 1,
+                "patch_size": 64,
+                "use_3d": False
+            },
+            "evaluation": {
+                "metrics": ["mae", "mse", "psnr", "ssim"],
+                "reference_required": False
+            },
+            "gui": {
+                "window_size": [1200, 800],
+                "theme": "light",
+                "font_size": 10
+            },
+            "regions": DEFAULT_REGION_PARAMS
+        }
+    
+    def get(self, *keys, default=None):
+        """
+        Get value from configuration using nested keys.
         
         Args:
-            d1: Base dictionary
-            d2: Dictionary with values to update
+            *keys: Nested keys to access
+            default: Default value if key not found
+            
+        Returns:
+            Value from configuration or default
+        """
+        result = self.config
+        
+        for key in keys:
+            if isinstance(result, dict) and key in result:
+                result = result[key]
+            else:
+                return default
+                
+        return result
+    
+    def set(self, value, *keys):
+        """
+        Set value in configuration using nested keys.
+        
+        Args:
+            value: Value to set
+            *keys: Nested keys to access
+            
+        Returns:
+            None
+        """
+        if not keys:
+            return
+            
+        # Navigate to the parent dictionary
+        parent = self.config
+        for key in keys[:-1]:
+            if key not in parent or not isinstance(parent[key], dict):
+                parent[key] = {}
+            parent = parent[key]
+            
+        # Set the value
+        parent[keys[-1]] = value
+    
+    def update(self, updates):
+        """
+        Update configuration with a dictionary.
+        
+        Args:
+            updates: Dictionary with updates
+            
+        Returns:
+            Updated configuration
+        """
+        self._update_dict(self.config, updates)
+        return self.config
+    
+    def _update_dict(self, d, u):
+        """
+        Update a dictionary recursively.
+        
+        Args:
+            d: Dictionary to update
+            u: Dictionary with updates
             
         Returns:
             Updated dictionary
         """
-        if not isinstance(d1, dict) or not isinstance(d2, dict):
-            return d2
-            
-        result = d1.copy()
-        for k, v in d2.items():
-            if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-                result[k] = self._deep_update(result[k], v)
-            else:
-                result[k] = v
+        import collections.abc
         
-        return result
+        for k, v in u.items():
+            if isinstance(v, collections.abc.Mapping) and k in d and isinstance(d[k], dict):
+                d[k] = self._update_dict(d[k], v)
+            else:
+                d[k] = v
+        
+        return d
     
     def save_config(self, output_path):
         """
@@ -113,89 +339,64 @@ class ConfigManager:
             logger.error(f"Error saving configuration to {output_path}: {str(e)}")
             return None
     
-    def get(self, *keys, default=None):
+    def get_preprocessing_params(self, region=None):
         """
-        Get value from configuration using nested keys.
+        Get preprocessing parameters.
         
         Args:
-            *keys: Key path to access nested configuration
-            default: Default value if key not found
+            region: Optional anatomical region for region-specific parameters
             
         Returns:
-            Configuration value or default
+            Preprocessing parameters
         """
-        result = self.config
-        for key in keys:
-            if isinstance(result, dict) and key in result:
-                result = result[key]
-            else:
-                return default
-        return result
+        params = self.get('preprocessing', default={})
+        if region and 'regions' in params and region in params['regions']:
+            # Merge region-specific params with general params
+            region_params = params['regions'][region]
+            general_params = {k: v for k, v in params.items() if k != 'regions'}
+            return {**general_params, **region_params}
+        return params
     
-    def set(self, value, *keys):
+    def get_segmentation_params(self, region=None):
         """
-        Set value in configuration using nested keys.
+        Get segmentation parameters.
         
         Args:
-            value: Value to set
-            *keys: Key path to access nested configuration
+            region: Optional anatomical region for region-specific parameters
             
         Returns:
-            True if successful, False otherwise
+            Segmentation parameters
         """
-        if not keys:
-            return False
-            
-        current = self.config
-        for key in keys[:-1]:
-            if key not in current:
-                current[key] = {}
-            current = current[key]
-            
-        current[keys[-1]] = value
-        return True
+        params = self.get('segmentation', default={})
+        if region and region in params:
+            # Return region-specific parameters
+            return params[region]
+        return params
     
-    def update(self, updates):
+    def get_conversion_params(self, method=None, region=None):
         """
-        Update configuration with dictionary of updates.
+        Get conversion parameters.
         
         Args:
-            updates: Dictionary with updates
+            method: Optional conversion method (atlas, cnn, gan)
+            region: Optional anatomical region for region-specific parameters
             
         Returns:
-            Updated configuration
+            Conversion parameters
         """
-        self.config = self._deep_update(self.config, updates)
-        return self.config
-    
-    def get_conversion_params(self, method, region):
-        """
-        Get conversion parameters for specified method and region.
+        params = self.get('conversion', default={})
         
-        Args:
-            method: Conversion method ('atlas', 'cnn', 'gan')
-            region: Anatomical region ('head', 'pelvis', 'thorax')
+        # Get method-specific parameters
+        if method and method in params:
+            method_params = params[method]
             
-        Returns:
-            Conversion parameters as dictionary
-        """
-        return self.get('conversion', method, region, default={})
-    
-    def get_preprocessing_params(self):
-        """Get preprocessing parameters."""
-        return self.get('preprocessing', default={})
-    
-    def get_segmentation_params(self, region):
-        """
-        Get segmentation parameters for specified region.
-        
-        Args:
-            region: Anatomical region ('head', 'pelvis', 'thorax')
+            # Get region-specific parameters within the method
+            if region and region in method_params:
+                return method_params[region]
             
-        Returns:
-            Segmentation parameters as dictionary
-        """
-        return self.get('segmentation', region, default={})
+            return method_params
+            
+        return params
     
     def get_evaluation_params(self):
         """Get evaluation parameters."""
@@ -205,42 +406,47 @@ class ConfigManager:
         """Get GUI parameters."""
         return self.get('gui', default={})
 
-
-# Global configuration manager instance
-_config_manager = None
-
-
-def load_config(config_path=None):
-    """
-    Load configuration from file.
-    
-    Args:
-        config_path: Path to configuration file (None to use default)
+    def get_region_params(self, region: str) -> Dict[str, Any]:
+        """
+        Get region-specific parameters.
         
-    Returns:
-        Loaded configuration
-    """
-    global _config_manager
-    
-    if _config_manager is None or (_config_manager.config_path != config_path and config_path is not None):
-        _config_manager = ConfigManager(config_path)
-    
-    return _config_manager
+        Args:
+            region: Anatomical region name
+            
+        Returns:
+            Region-specific parameters dictionary
+        """
+        # First try to get from config
+        region_params = self.get("regions", region)
+        
+        # Use default if not in config
+        if not region_params:
+            if region in DEFAULT_REGION_PARAMS:
+                logger.info(f"Using default parameters for region: {region}")
+                return DEFAULT_REGION_PARAMS[region]
+            else:
+                logger.warning(f"No parameters found for region: {region}, using brain as default")
+                if "brain" in DEFAULT_REGION_PARAMS:
+                    return DEFAULT_REGION_PARAMS["brain"]
+                else:
+                    logger.error("No default parameters available")
+                    return {}
+        
+        return region_params
 
 
 def get_config():
     """
-    Get current configuration.
+    Get configuration manager instance.
     
     Returns:
-        Current configuration
+        ConfigManager instance
     """
-    global _config_manager
+    # Use module-level singleton for configuration
+    if not hasattr(get_config, "_instance"):
+        get_config._instance = ConfigManager()
     
-    if _config_manager is None:
-        _config_manager = ConfigManager()
-    
-    return _config_manager
+    return get_config._instance
 
 
 def create_default_config(output_path):
@@ -303,3 +509,16 @@ def update_config_from_args(args):
     config_manager.update(updates)
     
     return config_manager.config 
+
+def get_region_params(region: str) -> Dict[str, Any]:
+    """
+    Get region-specific parameters.
+    
+    Args:
+        region: Anatomical region name
+        
+    Returns:
+        Region-specific parameters dictionary
+    """
+    config_manager = get_config()
+    return config_manager.get_region_params(region) 
