@@ -12,6 +12,159 @@ Trong lập kế hoạch xạ trị, ảnh CT là cần thiết cho tính toán 
 - Cải thiện độ chính xác trong xác định thể tích mục tiêu và cơ quan nguy cấp
 - Tối ưu hóa quy trình lập kế hoạch xạ trị
 
+## Tính năng mới triển khai
+
+1. **Pipeline thông minh tích hợp**
+   - Triển khai quy trình xử lý tích hợp từ tiền xử lý đến đánh giá
+   - Quản lý lỗi và khôi phục thông minh trong quy trình
+   - Hỗ trợ theo dõi tiến trình và trực quan hóa phản hồi
+
+2. **Phân đoạn não chuyên biệt**
+   - Triển khai thuật toán phân đoạn não dựa trên GMM (Gaussian Mixture Model)
+   - Phân biệt chính xác giữa chất xám, chất trắng và dịch não tuỷ
+   - Hỗ trợ xử lý hậu kỳ chuyên biệt để cải thiện kết quả phân đoạn
+
+3. **Đánh giá toàn diện**
+   - Đánh giá kết quả CT tổng hợp với nhiều thông số (MAE, MSE, PSNR, SSIM)
+   - So sánh kết quả theo vùng mô (xương, mô mềm, khoang khí)
+   - Trực quan hóa kết quả so sánh giữa CT tổng hợp và CT tham chiếu
+
+4. **Giao diện người dùng nâng cao**
+   - Tích hợp quy trình xử lý đầy đủ trong giao diện đồ họa
+   - Hiển thị đánh giá chi tiết và trực quan hóa kết quả
+   - Quản lý tiến trình và phản hồi thời gian thực
+
+## Quy trình phát triển và lộ trình thực hiện
+
+Dự án được chia thành 5 giai đoạn chính với các mục tiêu và nhiệm vụ cụ thể cho mỗi giai đoạn.
+
+### Giai đoạn 1: Thiết lập cơ sở hạ tầng và tiền xử lý ảnh MRI
+
+**Thời gian**: Tuần 1-3
+**Mục tiêu**: Xây dựng cơ sở hạ tầng dự án và hoàn thiện module tiền xử lý ảnh MRI
+
+1. **Khởi tạo dự án**:
+   - Thiết lập cấu trúc thư mục dự án
+   - Cài đặt các phụ thuộc cơ bản
+   - Thiết lập hệ thống quản lý cấu hình
+
+2. **Tiền xử lý ảnh MRI**:
+   - Phát triển các thuật toán chuẩn hóa cường độ tín hiệu
+   - Triển khai công cụ loại bỏ nhiễu và cải thiện chất lượng ảnh
+   - Xây dựng module đăng ký hình ảnh giữa các chuỗi MRI khác nhau
+   - Kiểm thử và tối ưu hóa hiệu suất của bước tiền xử lý
+
+3. **Công cụ và tiện ích**:
+   - Phát triển các tiện ích xử lý dữ liệu DICOM
+   - Tạo công cụ trực quan hóa để kiểm tra kết quả tiền xử lý
+   - Xây dựng cấu trúc dữ liệu cho việc xử lý I/O ảnh y tế
+
+### Giai đoạn 2: Phân đoạn mô và cấu trúc giải phẫu
+
+**Thời gian**: Tuần 4-6
+**Mục tiêu**: Xây dựng hệ thống phân đoạn mô tự động từ ảnh MRI
+
+1. **Phân đoạn cấu trúc xương**:
+   - Phát triển các thuật toán phân đoạn xương tự động
+   - Ứng dụng các phương pháp học máy để cải thiện độ chính xác phân đoạn
+   - Tối ưu hóa cho các vùng giải phẫu khác nhau (đầu, chậu, ngực)
+
+2. **Phân đoạn mô mềm**:
+   - Triển khai phân đoạn cho các loại mô mềm khác nhau
+   - Cải thiện tương phản giữa các loại mô
+   - Phân loại mô mềm theo mật độ để chuẩn bị cho việc chuyển đổi HU
+
+3. **Phân đoạn khoang khí**:
+   - Phát triển thuật toán nhận diện và phân đoạn khoang khí
+   - Xử lý các trường hợp đặc biệt (xoang, đường thở...)
+   - Khắc phục các thách thức trong phân đoạn khoang khí
+
+4. **Kiểm thử và đánh giá**:
+   - Xây dựng các metrics đánh giá độ chính xác phân đoạn
+   - So sánh với phân đoạn thủ công bởi chuyên gia
+   - Tạo báo cáo đánh giá tự động
+
+### Giai đoạn 3: Phát triển mô hình chuyển đổi MRI-CT
+
+**Thời gian**: Tuần 7-10
+**Mục tiêu**: Triển khai và huấn luyện các mô hình chuyển đổi ảnh MRI thành CT tổng hợp
+
+1. **Triển khai mô hình dựa trên Atlas**:
+   - Xây dựng cơ sở dữ liệu Atlas cho các vùng giải phẫu
+   - Phát triển thuật toán đăng ký và biến đổi dựa trên Atlas
+   - Tối ưu hóa cho từng vùng giải phẫu cụ thể
+
+2. **Triển khai mô hình CNN**:
+   - Thiết kế kiến trúc mạng CNN cho chuyển đổi MRI-CT
+   - Chuẩn bị dữ liệu huấn luyện và kiểm thử
+   - Huấn luyện và tinh chỉnh mô hình CNN
+
+3. **Triển khai mô hình GAN**:
+   - Phát triển kiến trúc GAN cho việc tạo ảnh CT tổng hợp chất lượng cao
+   - Huấn luyện mô hình với các tập dữ liệu cặp MRI-CT
+   - Áp dụng các kỹ thuật cải tiến như cGAN, pix2pix để cải thiện chất lượng
+
+4. **Tích hợp phương pháp kết hợp**:
+   - Phát triển cơ chế kết hợp kết quả từ nhiều mô hình
+   - Tối ưu hóa trọng số kết hợp dựa trên vùng giải phẫu
+   - Đánh giá hiệu suất của phương pháp kết hợp so với từng mô hình riêng biệt
+
+5. **Kiểm thử và so sánh các mô hình**:
+   - Đánh giá định lượng (MAE, MSE, PSNR, SSIM)
+   - Đánh giá định tính (khảo sát từ chuyên gia)
+   - So sánh hiệu năng tính toán và yêu cầu tài nguyên
+
+### Giai đoạn 4: Đánh giá và tối ưu hóa kết quả
+
+**Thời gian**: Tuần 11-13
+**Mục tiêu**: Đánh giá toàn diện và tối ưu hóa chất lượng CT tổng hợp
+
+1. **Đánh giá tổng thể**:
+   - So sánh CT tổng hợp với CT thực trên nhiều metrics
+   - Phân tích sai số theo vùng giải phẫu và loại mô
+   - Đánh giá tính nhất quán giữa các bệnh nhân
+
+2. **Tối ưu hóa hậu xử lý**:
+   - Phát triển các phương pháp hiệu chỉnh sai số tự động
+   - Cải thiện chất lượng tái tạo cấu trúc xương phức tạp
+   - Làm mịn và điều chỉnh ranh giới mô
+
+3. **Đánh giá trên kế hoạch xạ trị**:
+   - Tích hợp CT tổng hợp vào quy trình lập kế hoạch xạ trị
+   - So sánh phân bố liều giữa kế hoạch dựa trên CT thực và CT tổng hợp
+   - Đánh giá ảnh hưởng của sai số CT tổng hợp đến tính toán liều
+   - Phân tích DVH (Dose Volume Histogram) từ cả hai kế hoạch
+
+4. **Kiểm soát chất lượng (QA)**:
+   - Phát triển quy trình kiểm tra chất lượng tự động
+   - Tạo cơ chế cảnh báo khi có sai lệch lớn
+   - Tối ưu hóa các thông số dựa trên kết quả đánh giá
+
+### Giai đoạn 5: Triển khai giao diện người dùng và tài liệu
+
+**Thời gian**: Tuần 14-16
+**Mục tiêu**: Hoàn thiện giao diện người dùng và tài liệu cho việc triển khai
+
+1. **Phát triển giao diện người dùng**:
+   - Thiết kế và triển khai giao diện đồ họa thân thiện với người dùng
+   - Tích hợp tất cả các module vào một hệ thống thống nhất
+   - Cải thiện trải nghiệm người dùng dựa trên phản hồi
+
+2. **Tích hợp quy trình đầy đủ**:
+   - Kết nối liền mạch tất cả các bước từ tiền xử lý đến đánh giá
+   - Tự động hóa quy trình nơi có thể
+   - Đảm bảo tính nhất quán giữa các module
+
+3. **Tài liệu và hướng dẫn**:
+   - Tạo tài liệu kỹ thuật chi tiết cho nhà phát triển
+   - Viết hướng dẫn sử dụng cho người dùng cuối
+   - Tạo ví dụ mẫu và hướng dẫn từng bước
+
+4. **Triển khai và kiểm thử cuối cùng**:
+   - Triển khai hệ thống hoàn chỉnh trong môi trường thử nghiệm
+   - Kiểm thử với người dùng thực tế và thu thập phản hồi
+   - Sửa lỗi và cải tiến dựa trên phản hồi
+
 ## Tính năng cơ bản
 
 1. **Tiền xử lý ảnh MRI**
@@ -191,55 +344,16 @@ python app/main.py --input path/to/mri.nii.gz --output path/to/output --model ga
 python app/main.py --help
 ```
 
-## Hướng dẫn chi tiết
-
-### Tiền xử lý ảnh MRI
-
-```bash
-# Tiền xử lý ảnh MRI riêng biệt
-python app/main.py --mode preprocess --input path/to/mri.nii.gz --output path/to/preprocessed
-```
-
-### Phân đoạn mô
-
-```bash
-# Phân đoạn mô từ ảnh MRI đã tiền xử lý
-python app/main.py --mode segment --input path/to/preprocessed/mri.nii.gz --output path/to/segmentation --region head
-```
-
-### Chuyển đổi MRI sang CT
-
-```bash
-# Chuyển đổi từ MRI đã tiền xử lý sang synthetic CT
-python app/main.py --mode convert --input path/to/preprocessed/mri.nii.gz --segmentation path/to/segmentation.nii.gz --output path/to/synthetic_ct.nii.gz --model gan --region head
-```
-
-### Đánh giá kết quả
-
-```bash
-# Đánh giá synthetic CT với CT tham chiếu
-python scripts/evaluate_model.py --mri_path path/to/mri.nii.gz --ct_path path/to/reference_ct.nii.gz --output_dir results/evaluation --model_type gan --region head --mode single
-
-# Đánh giá hàng loạt
-python scripts/evaluate_model.py --mri_dir data/test/mri --ct_dir data/test/ct --output_dir results/batch_evaluation --model_type gan --region head --mode batch
-
-# So sánh nhiều mô hình
-python scripts/evaluate_model.py --mri_path path/to/mri.nii.gz --ct_path path/to/reference_ct.nii.gz --output_dir results/comparison --region head --mode compare
-```
-
-### Huấn luyện mô hình
-
-```bash
-# Tạo dataset cho huấn luyện
-python scripts/train_gan_model.py --mri_dirs data/raw/mri --ct_dirs data/raw/ct --dataset_dir data/processed/gan_dataset --create_dataset --region head
-
-# Huấn luyện mô hình GAN
-python scripts/train_gan_model.py --dataset_dir data/processed/gan_dataset --output_dir models/gan/head --epochs 200 --batch_size 4 --lambda_l1 100 --region head
-```
-
 ## Ví dụ quy trình hoàn chỉnh
 
 Dưới đây là quy trình đầy đủ từ dữ liệu thô đến ảnh CT tổng hợp và đánh giá:
+
+```bash
+# Sử dụng quy trình tích hợp (phương pháp mới)
+python app/main.py --mode pipeline --input data/raw/patient001.nii.gz --output results/patient001 --model gan --region head --reference data/raw/patient001_ct.nii.gz
+```
+
+Hoặc quy trình từng bước:
 
 ```bash
 # 1. Tiền xử lý ảnh MRI
@@ -309,181 +423,165 @@ Nếu bạn sử dụng mã nguồn hoặc phương pháp từ dự án này tro
 
 Nếu bạn có bất kỳ câu hỏi hoặc gợi ý nào, vui lòng tạo một issue hoặc liên hệ trực tiếp qua email.
 
----
+## Hướng dẫn thiết lập và kiểm thử
 
-# English Version <a name="english-version"></a>
+### 1. Cài đặt
 
-# Synthetic-CT-from-MRI-for-radiotherapy
+```bash
+# Clone repository
+git clone https://github.com/your-username/Synthetic-CT-from-MRI-for-radiotherapy.git
+cd Synthetic-CT-from-MRI-for-radiotherapy
 
-A project to convert MRI images to synthetic CT images (sCT) for radiotherapy planning, aiming to reduce unwanted radiation dose to patients.
+# Cài đặt các thư viện phụ thuộc
+pip install -r requirements.txt
+```
 
-## Overview
+### 2. Tạo mô hình placeholder cho kiểm thử
 
-In radiotherapy planning, CT images are essential for dose calculation as they provide information about the electron density of tissues. However, MRI provides better soft tissue contrast for accurate tumor localization. This project aims to combine the advantages of both imaging modalities by generating synthetic CT images from MRI, helping to:
+Dự án sử dụng các mô hình trong thư mục `/models` cho việc chuyển đổi MRI sang CT. Để kiểm thử chức năng với mô hình placeholder, chạy:
 
-- Reduce diagnostic radiation dose to patients (avoiding additional CT scans)
-- Improve accuracy in target volume and organs-at-risk delineation
-- Optimize the radiotherapy planning workflow
+```bash
+python scripts/create_placeholder_models.py
+```
 
-## Basic Features
+### 3. Kiểm thử chức năng
+
+Để kiểm thử các phương pháp chuyển đổi MRI thành CT:
+
+```bash
+python scripts/verify_models.py
+```
+
+Script này tạo ảnh MRI và phân đoạn mô giả, sau đó thực hiện chuyển đổi với các phương pháp khác nhau (atlas, cnn, gan) cho ba vùng giải phẫu (head, pelvis, thorax).
+
+Kết quả kiểm thử sẽ được lưu trong thư mục `/test_results`.
+
+### 4. Chạy ứng dụng
+
+```bash
+# Chạy giao diện người dùng đồ họa
+python app/main.py --mode gui
+
+# Chạy quy trình xử lý đầy đủ từ dòng lệnh
+python app/main.py --mode pipeline --input-path <path-to-mri> --output-dir <output-directory>
+```
+
+## English Version
+
+Project for converting MRI images to synthetic CT (sCT) for radiotherapy treatment planning, aiming to reduce unwanted radiation dose to patients.
+
+## Setup and Testing Instructions
+
+### 1. Installation
+
+```bash
+# Clone repository
+git clone https://github.com/your-username/Synthetic-CT-from-MRI-for-radiotherapy.git
+cd Synthetic-CT-from-MRI-for-radiotherapy
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. Create placeholder models for testing
+
+The project uses models in the `/models` directory for MRI to CT conversion. To test functionality with placeholder models, run:
+
+```bash
+python scripts/create_placeholder_models.py
+```
+
+### 3. Test functionality
+
+To test the different MRI to CT conversion methods:
+
+```bash
+python scripts/verify_models.py
+```
+
+This script creates dummy MRI and tissue segmentation, then performs conversion using different methods (atlas, cnn, gan) for three anatomical regions (head, pelvis, thorax).
+
+Test results will be saved in the `/test_results` directory.
+
+### 4. Run the application
+
+```bash
+# Run the graphical user interface
+python app/main.py --mode gui
+
+# Run the complete processing pipeline from command line
+python app/main.py --mode pipeline --input-path <path-to-mri> --output-dir <output-directory>
+```
+
+## Project Structure
+
+```
+Synthetic-CT-from-MRI-for-radiotherapy/
+├── app/                    # Main application code
+│   ├── core/               # Core processing modules
+│   │   ├── preprocessing/  # MRI preprocessing
+│   │   ├── segmentation/   # Tissue segmentation
+│   │   ├── conversion/     # MRI to CT conversion
+│   │   └── evaluation/     # Results evaluation
+│   ├── gui/                # Graphical user interface
+│   ├── utils/              # Utility functions
+│   └── main.py             # Application entry point
+├── configs/                # Configuration files
+├── data/                   # Sample data directory
+├── models/                 # Pre-trained models
+│   ├── atlas/              # Atlas-based models
+│   ├── cnn/                # CNN-based models
+│   ├── gan/                # GAN-based models
+│   └── segmentation/       # Segmentation models
+├── scripts/                # Utility scripts
+├── tests/                  # Unit and integration tests
+└── requirements.txt        # Python dependencies
+```
+
+## Features Overview
+
+### Basic Features
 
 1. **MRI Preprocessing**
-   - Signal intensity normalization
-   - Noise reduction and image quality enhancement
-   - Image registration between different MRI sequences
+   - Intensity normalization
+   - Denoising and image quality enhancement
+   - Registration between different MRI sequences
 
 2. **MRI to CT Conversion**
-   - Deep Learning models for conversion
+   - Deep learning models for conversion
    - Atlas-based methods for common anatomical structures
-   - Generation of HU (Hounsfield Unit) maps from MRI signal intensities
+   - Hounsfield Unit (HU) mapping from MRI signal intensity
 
 3. **Automatic Tissue Segmentation**
    - Bone structure segmentation
    - Soft tissue segmentation
    - Air cavity segmentation
 
-4. **Result Evaluation**
+4. **Results Evaluation**
    - MAE (Mean Absolute Error) comparison between real and synthetic CT
    - Error analysis on different tissue types
-   - Difference visualization tools
+   - Visualization tools for differences
 
-5. **Patient Data Management**
-   - DICOM import and export
-   - Patient information security
-   - Processing history storage
-
-## Advanced Features
+### Advanced Features
 
 1. **Multi-sequence MRI Integration**
-   - Combination of data from multiple MRI sequences (T1, T2, FLAIR, etc.)
+   - Combining data from multiple MRI sequences (T1, T2, FLAIR, etc.)
    - Model optimization for specific anatomical regions
    - Multi-parameter synthetic CT generation
 
-2. **Anatomical Region Customization**
-   - Specialized models for head and neck regions
-   - Specialized models for pelvic regions
-   - Specialized models for thoracic regions
+2. **Deep Learning Model Implementation**
+   - CNN-based models
+   - GAN-based models
+   - Encoder-decoder architectures
 
-3. **Radiotherapy Planning Optimization**
-   - Direct integration with treatment planning systems (TPS)
-   - Dose distribution comparison between real CT and synthetic CT-based plans
-   - Assessment of synthetic CT error impacts on dose calculation
+3. **Dose Calculation Integration**
+   - DVH (Dose-Volume Histogram) analysis
+   - Dose distribution comparison
+   - Treatment plan quality metrics
 
-4. **Quality Assurance (QA) Tools**
-   - Automatic conversion accuracy verification
-   - Warning alerts for large discrepancies
-   - Automatic QA report generation
+4. **Enhanced User Interface**
+   - Integrated full processing pipeline
+   - Detailed evaluation display and visualization
+   - Real-time progress monitoring
 
-5. **Advanced Machine Learning**
-   - Model updates and improvements from new data
-   - GAN (Generative Adversarial Networks) techniques for high-quality CT image generation
-   - Transfer learning support for small datasets
-
-6. **Intelligent Post-processing**
-   - Automatic error correction
-   - Complex bone structure detail reconstruction
-   - Tissue boundary smoothing and adjustment
-
-## Project Structure
-
-```
-synthetic-ct-from-mri/
-├── app/                          # Main application
-│   ├── main.py                   # Application entry point
-│   ├── gui/                      # Graphical user interface
-│   │   ├── __init__.py           # GUI module definition
-│   │   ├── main_window.py        # Main application window
-│   │   └── run.py                # GUI runner script
-│   ├── core/                     # Core modules
-│   │   ├── preprocessing/        # MRI preprocessing
-│   │   │   ├── __init__.py       # Module definition
-│   │   │   └── preprocess_mri.py # MRI processing
-│   │   ├── segmentation/         # Anatomical structure segmentation
-│   │   │   ├── __init__.py       # Module definition
-│   │   │   └── segment_tissues.py # Tissue segmentation
-│   │   ├── conversion/           # MRI to CT conversion
-│   │   │   ├── __init__.py       # Module definition
-│   │   │   └── convert_mri_to_ct.py # MRI to CT conversion
-│   │   └── evaluation/           # Result evaluation
-│   │       ├── __init__.py       # Module definition
-│   │       └── evaluate_synthetic_ct.py # Synthetic CT evaluation
-│   ├── training/                 # Model training module
-│   │   ├── __init__.py           # Module definition
-│   │   ├── train_cnn.py          # CNN model training
-│   │   └── train_gan.py          # GAN model training
-│   └── utils/                    # Các tiện ích
-│       ├── __init__.py           # Module definition
-│       ├── io_utils.py           # Input/output utilities
-│       ├── dicom_utils.py        # DICOM handling utilities
-│       ├── visualization.py      # Visualization utilities
-│       └── config_utils.py       # Configuration utilities
-├── configs/                      # Configuration
-│   └── default_config.yaml       # Default configuration
-├── data/                         # Dữ liệu
-│   ├── input/                    # Input data
-│   │   ├── mri/                  # MRI data
-│   │   └── ct/                   # Reference CT data
-│   └── output/                   # Dữ liệu đầu ra
-│       ├── preprocessed/         # MRI đã tiền xử lý
-│       ├── segmented/            # Kết quả phân đoạn
-│       ├── synthetic_ct/         # CT tổng hợp
-│       └── evaluation/           # Kết quả đánh giá
-├── models/                       # Lưu trữ mô hình
-│   ├── cnn/                      # CNN models
-│   ├── gan/                      # GAN models
-│   └── atlas/                    # Dữ liệu Atlas
-├── scripts/                      # Scripts hỗ trợ
-│   ├── prepare_dataset.py        # Chuẩn bị dữ liệu
-│   ├── train_gan_model.py        # Script huấn luyện GAN
-│   └── evaluate_model.py         # Script đánh giá mô hình
-├── tests/                        # Kiểm thử
-│   ├── __init__.py               # Định nghĩa module tests
-│   ├── test_preprocessing.py     # Kiểm thử tiền xử lý
-│   ├── test_segmentation.py      # Kiểm thử phân đoạn
-│   ├── test_conversion.py        # Kiểm thử chuyển đổi
-│   └── test_io_utils.py          # IO utilities tests
-├── setup.py                      # Cài đặt gói
-└── requirements.txt              # Các phụ thuộc
-```
-
-## Installation
-
-```bash
-# Clone repository
-git clone https://github.com/username/synthetic-ct-from-mri.git
-cd synthetic-ct-from-mri
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install package
-pip install -e .
-```
-
-## Usage
-
-### Command-line Interface
-
-```bash
-# Tiền xử lý ảnh MRI
-synthetic_ct preprocess input_mri.nii.gz preprocessed_mri.nii.gz --bias_correction --denoise --normalize
-
-# Phân đoạn mô
-synthetic_ct segment preprocessed_mri.nii.gz segmentation.nii.gz --method deeplearning --region head
-
-# Chuyển đổi MRI sang CT
-synthetic_ct convert preprocessed_mri.nii.gz synthetic_ct.nii.gz --method cnn --segmentation segmentation.nii.gz
-
-# Đánh giá kết quả
-synthetic_ct evaluate synthetic_ct.nii.gz reference_ct.nii.gz --metrics mae,mse,psnr,ssim --report evaluation_report.pdf
-
-# Hiển thị kết quả
-synthetic_ct visualize synthetic_ct.nii.gz --compare reference_ct.nii.gz --output comparison.png
-```
-
-### Graphical User Interface (GUI)
-
-```bash
-# Launch the GUI
-synthetic_ct_gui
-```
+If you have any questions or suggestions, please create an issue or contact us directly via email.

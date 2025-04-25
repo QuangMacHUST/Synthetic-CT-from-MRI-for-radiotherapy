@@ -23,6 +23,8 @@ from app.core.segmentation import segment_tissues
 from app.core.conversion import convert_mri_to_ct
 from app.core.evaluation import evaluate_synthetic_ct
 from app.utils.config_utils import get_config, update_config_from_args, ConfigManager
+# Import module tích hợp mới
+from app.core.conversion.mri_to_ct_pipeline import MRItoCTPipeline, run_pipeline
 
 
 def parse_arguments():
@@ -338,87 +340,80 @@ def handle_evaluate(args, config):
 
 
 def handle_pipeline(args, config):
-    """Xử lý toàn bộ quy trình từ MRI đến CT tổng hợp và đánh giá."""
-    logging.info("Bắt đầu quy trình xử lý toàn bộ từ MRI đến CT tổng hợp")
-    
-    # Tạo các thư mục con trong thư mục đầu ra
-    output_base = Path(args.output)
-    output_base.mkdir(exist_ok=True, parents=True)
-    
-    preprocessed_dir = output_base / "preprocessed"
-    segmentation_dir = output_base / "segmentation"
-    synthetic_ct_dir = output_base / "synthetic_ct"
-    evaluation_dir = output_base / "evaluation"
-    
-    for dir_path in [preprocessed_dir, segmentation_dir, synthetic_ct_dir, evaluation_dir]:
-        dir_path.mkdir(exist_ok=True)
-    
+    """Handle pipeline mode."""
     try:
-        # Step 1: Preprocess MRI
-        logging.info("Bước 1: Tiền xử lý ảnh MRI")
-        preprocessed_path = preprocessed_dir / f"preprocessed_mri.nii.gz"
-        preprocessed_mri = preprocess_mri(
-            args.input,
-            apply_bias_field_correction=True,
-            apply_denoising=True,
-            apply_normalization=True,
-            config=config
-        )
-        preprocessed_mri.save(str(preprocessed_path))
-        logging.info(f"Đã lưu MRI đã tiền xử lý tại: {preprocessed_path}")
+        from app.core.conversion.mri_to_ct_pipeline import run_complete_pipeline_with_evaluation
         
-        # Step 2: Segment tissues
-        logging.info(f"Bước 2: Phân đoạn mô cho vùng {args.region}")
-        segmentation_path = segmentation_dir / f"segmentation_{args.region}.nii.gz"
-        segmentation = segment_tissues(
-            str(preprocessed_path),
-            method="deep_learning",
-            region=args.region,
-            config=config
-        )
-        segmentation.save(str(segmentation_path))
-        logging.info(f"Đã lưu kết quả phân đoạn tại: {segmentation_path}")
+        logging.info(f"Running full pipeline on {args.input}")
+        logging.info(f"Selected model: {args.model}")
+        logging.info(f"Selected region: {args.region}")
         
-        # Step 3: Convert MRI to CT
-        logging.info(f"Bước 3: Chuyển đổi MRI sang CT sử dụng mô hình {args.model}")
-        synthetic_ct_path = synthetic_ct_dir / f"synthetic_ct_{args.model}_{args.region}.nii.gz"
-        synthetic_ct = convert_mri_to_ct(
-            str(preprocessed_path),
-            segmentation_path=str(segmentation_path),
+        # Create output directories
+        output_dir = Path(args.output)
+        output_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Progress printing function
+        def print_progress(value, message=None):
+            if message:
+                print(f"{message} ({value}%)")
+            else:
+                print(f"Progress: {value}%")
+        
+        # Run the complete pipeline
+        result = run_complete_pipeline_with_evaluation(
+            mri_path=args.input,
+            output_dir=args.output,
+            reference_ct_path=args.reference if hasattr(args, 'reference') else None,
             model_type=args.model,
             region=args.region,
-            config=config
+            # Get preprocessing options from args if available, otherwise use defaults
+            apply_bias_field_correction=getattr(args, 'bias_correction', True),
+            apply_denoising=getattr(args, 'denoise', True),
+            apply_normalization=getattr(args, 'normalize', True),
+            config=config,
+            progress_callback=print_progress
         )
-        synthetic_ct.save(str(synthetic_ct_path))
-        logging.info(f"Đã lưu CT tổng hợp tại: {synthetic_ct_path}")
         
-        # Step 4: Evaluate if reference CT is provided
-        if hasattr(args, 'reference') and args.reference:
-            logging.info("Bước 4: Đánh giá kết quả so với CT tham chiếu")
-            evaluation_results = evaluate_synthetic_ct(
-                str(synthetic_ct_path),
-                args.reference,
-                metrics=["mae", "mse", "psnr", "ssim"],
-                config=config
-            )
+        # Handle results
+        if 'error' in result:
+            logging.error(f"Pipeline error: {result['error']}")
+            print(f"Error during pipeline execution: {result['error']}")
+            return 1
             
-            # Lưu và hiển thị kết quả
-            output_report = evaluation_dir / "evaluation_report.json"
-            evaluation_results.save_report(str(output_report))
+        print("\nPipeline completed successfully!")
+        
+        # Print paths to output files
+        if 'output_paths' in result:
+            print("\nOutput files:")
+            for output_type, path in result['output_paths'].items():
+                if isinstance(path, dict):
+                    print(f"  - {output_type}:")
+                    for subtype, subpath in path.items():
+                        print(f"    - {subtype}: {subpath}")
+                else:
+                    print(f"  - {output_type}: {path}")
+        
+        # Print evaluation results if available
+        if 'evaluation_results' in result:
+            print("\nEvaluation results:")
+            eval_results = result['evaluation_results']
             
-            logging.info(f"Kết quả đánh giá:")
-            for metric, value in evaluation_results.metrics.items():
-                logging.info(f"  {metric}: {value}")
+            if isinstance(eval_results, dict):
+                for metric, value in eval_results.items():
+                    print(f"  - {metric}: {value}")
+            else:
+                # If it's an EvaluationResult object
+                for metric, value in eval_results.metrics.items():
+                    print(f"  - {metric}: {value}")
                 
-            logging.info(f"Đã lưu báo cáo đánh giá chi tiết tại: {output_report}")
+                if hasattr(eval_results, 'report_path') and eval_results.report_path:
+                    print(f"\nDetailed evaluation report saved to: {eval_results.report_path}")
         
-        logging.info("Hoàn thành quy trình xử lý toàn bộ từ MRI đến CT tổng hợp")
         return 0
         
     except Exception as e:
-        logging.error(f"Lỗi trong quy trình xử lý: {str(e)}")
-        if args.verbose:
-            traceback.print_exc()
+        logging.error(f"Error during pipeline execution: {str(e)}", exc_info=True)
+        print(f"Error during pipeline execution: {str(e)}")
         return 1
 
 

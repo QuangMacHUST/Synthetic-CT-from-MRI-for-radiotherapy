@@ -1,0 +1,13 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+1️. You have full access to all files and permissions in this project.
+2️. You can download any necessary resources from the web for this project.
+3️. You must thoroughly understand the project structure and how each file corresponds to specific features.
+4️. Your goal is to complete the treatment planning system with full functionality and no errors.
+5️. Ensure the system is consistent, well-structured, and clearly designed. Each file must have a clear purpose and correspond to a specific feature.
+6️. Read and understand all comments in files and functions before making any decisions. Comments describe the purpose, functionality, and features of each component.
+
+7️. Ensure all features are correctly implemented, activated, and function as expected.

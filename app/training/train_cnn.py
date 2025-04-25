@@ -32,7 +32,8 @@ from skimage.metrics import structural_similarity
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from app.utils.config_utils import load_config
+# Import từ ConfigManager thay vì load_config
+from app.utils.config_utils import ConfigManager
 from app.utils.io_utils import load_medical_image, save_medical_image, SyntheticCT
 from app.core.preprocessing import preprocess_mri
 

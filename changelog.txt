@@ -1,0 +1,12 @@
+# Changelog for Synthetic-CT-from-MRI-for-radiotherapy
+
+## [Unreleased]
+
+### Fixed
+- Fixed duplicate `update_slice_view` method in `SimpleImageViewer` class
+- Enhanced the `eventFilter` method to capture mouse wheel events for slice navigation
+- Added slice number display on each view
+- Implemented proper 3D visualization with VTK support and a fallback to matplotlib
+- Added position information display
+- Added required imports for 3D visualization
+- Fixed error in the `update_slice_view` method parameter handling 

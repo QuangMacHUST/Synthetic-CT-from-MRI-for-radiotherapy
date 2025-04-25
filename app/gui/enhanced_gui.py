@@ -58,6 +58,14 @@ except ImportError:
     logging.warning("Could not import convert_mri_to_ct function")
     convert_mri_to_ct = None
 
+# Import the integrated pipeline
+try:
+    from app.core.conversion.mri_to_ct_pipeline import MRItoCTPipeline, run_pipeline
+except ImportError:
+    logging.warning("Could not import MRItoCTPipeline")
+    MRItoCTPipeline = None
+    run_pipeline = None
+
 class ProcessingThread(QThread):
     """Thread for processing operations"""
     
@@ -517,30 +525,48 @@ class SimpleImageViewer(QWidget):
     def update_display(self):
         """Update the display of all views with current window/level and slices"""
         if hasattr(self, 'image') and self.image is not None:
-            for view_name, view_data in self.views.items():
+            for view_name in self.views:
                 slice_idx = self.current_slices[view_name]
                 self.update_slice_view(view_name, slice_idx)
     
-    def update_slice_view(self, view_name, slice_idx):
+    def update_slice_view(self, view_name, slice_idx=None):
         """Update an individual slice view with the current window/level settings"""
         if hasattr(self, 'image') and self.image is not None and view_name in self.views:
-            # Ensure slice index is within bounds
-            view_data = self.views[view_name]
-            max_slice = view_data['max_slice']
-            if slice_idx < 0:
-                slice_idx = 0
-            elif slice_idx > max_slice:
-                slice_idx = max_slice
+            # Get slice index - either passed directly or from the current UI controls
+            if slice_idx is not None:
+                # Ensure slice index is within bounds
+                view_data = self.views[view_name]
+                max_slice = view_data['max_slice']
+                if slice_idx < 0:
+                    slice_idx = 0
+                elif slice_idx > max_slice:
+                    slice_idx = max_slice
+                
+                # Update current slice index
+                self.current_slices[view_name] = slice_idx
+                
+                # Update slice indicators (1-based for UI)
+                view_data['slider'].setValue(slice_idx + 1)
+                view_data['spinner'].setValue(slice_idx + 1)
+                
+                current_slice = slice_idx
+            else:
+                # Get current slice from spinner
+                slice_spinbox = getattr(self, f"{view_name}_slice_spinbox", None)
+                if slice_spinbox:
+                    current_slice = slice_spinbox.value() - 1  # Convert from 1-based UI to 0-based index
+                else:
+                    current_slice = self.current_slices.get(view_name, 0)
             
             # Extract the slice based on view orientation
             if view_name == 'axial':
-                slice_data = self.image_array[slice_idx, :, :]
+                slice_array = self.image_array[current_slice, :, :]
                 total_slices = self.image_array.shape[0]
             elif view_name == 'coronal':
-                slice_data = self.image_array[:, slice_idx, :]
+                slice_array = self.image_array[:, current_slice, :]
                 total_slices = self.image_array.shape[1]
             elif view_name == 'sagittal':
-                slice_data = self.image_array[:, :, slice_idx]
+                slice_array = self.image_array[:, :, current_slice]
                 total_slices = self.image_array.shape[2]
             else:
                 return
@@ -550,7 +576,7 @@ class SimpleImageViewer(QWidget):
             max_val = self.level + (self.window / 2)
             
             # Normalize to 0-255 for display
-            normalized = np.clip((slice_data - min_val) / (max_val - min_val) * 255, 0, 255).astype(np.uint8)
+            normalized = np.clip((slice_array - min_val) / (max_val - min_val) * 255, 0, 255).astype(np.uint8)
             
             # Create QImage
             height, width = normalized.shape
@@ -567,19 +593,12 @@ class SimpleImageViewer(QWidget):
             font.setBold(True)
             painter.setFont(font)
             painter.setPen(QPen(Qt.green))
-            painter.drawText(10, 20, f"Slice: {slice_idx + 1}/{total_slices}")
+            painter.drawText(10, 20, f"Slice: {current_slice + 1}/{total_slices}")
             painter.end()
             
             # Update label
             label = view_data['label']
             label.setPixmap(pixmap)
-            
-            # Update slice indicators
-            view_data['slider'].setValue(slice_idx + 1)  # +1 for 1-based display
-            view_data['spinner'].setValue(slice_idx + 1)
-            
-            # Update current slice index
-            self.current_slices[view_name] = slice_idx
             
             # Update position information if method exists
             if hasattr(self, 'update_position_info'):
@@ -1529,60 +1548,173 @@ class EnhancedMainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         
     def generateSyntheticCT(self):
-        """Generate synthetic CT from segmented MRI"""
-        if self.segmented_image is None or self.preprocessed_mri is None:
+        """Generate synthetic CT from MRI using the selected model"""
+        if self.mri_path is None:
+            QMessageBox.warning(self, "Error", "Please select an MRI image first")
             return
             
-        # Get conversion parameters
-        conv_params = {
-            'method': self.model_combo.currentText(),
-            'region': self.region_combo.currentText(),
-            'batch_size': self.batch_size.value(),
-            'patch_size': self.patch_size.value(),
-            'use_3d': self.use_3d.isChecked(),
-            # Add performance parameters
-            'num_threads': self.num_threads.value() if hasattr(self, 'num_threads') else 4,
-            'gpu_memory_limit': self.gpu_memory.value() if hasattr(self, 'gpu_memory') else 4,
-            # Add output options
-            'output_format': self.output_format.currentText().lower() if hasattr(self, 'output_format') else 'nifti',
-            'use_compression': self.use_compression.isChecked() if hasattr(self, 'use_compression') else True,
-            'save_intermediates': self.save_intermediates.isChecked() if hasattr(self, 'save_intermediates') else False
-        }
+        # Get selected options
+        model_type = self.model_combo.currentText()
+        region = self.region_combo.currentText()
         
-        # Show message with selected options
-        option_text = (
-            f"Converting with {conv_params['method']} model for {conv_params['region']} region\n"
-            f"Using batch size: {conv_params['batch_size']}, patch size: {conv_params['patch_size']}\n"
-            f"3D model: {'Yes' if conv_params['use_3d'] else 'No'}\n"
-            f"Threads: {conv_params['num_threads']}, GPU Memory: {conv_params['gpu_memory_limit']}GB\n"
-            f"Output format: {conv_params['output_format']}, Compression: {'Yes' if conv_params['use_compression'] else 'No'}"
-        )
-        logging.info(option_text)
+        # Get preprocessing options
+        apply_bias = self.bias_field_check.isChecked()
+        apply_denoise = self.denoise_check.isChecked()
+        apply_normalize = self.normalize_check.isChecked()
         
-        # Create processing thread
-        self.processing_thread = ProcessingThread(
-            convert_mri_to_ct,
-            self.preprocessed_mri,
-            seg=self.segmented_image,
-            **conv_params
-        )
+        # Check if we're using pipeline
+        use_pipeline = self.pipeline_check.isChecked() 
         
-        # Connect signals
-        self.processing_thread.finished.connect(self.conversionFinished)
-        self.processing_thread.error.connect(self.processingError)
-        self.processing_thread.progress.connect(self.updateProgress)
-        
-        # Start processing
+        # Create output directory if it doesn't exist
+        if not self.output_dir:
+            # Default output directory alongside the MRI file
+            self.output_dir = str(Path(self.mri_path).parent / "synthetic_ct_results")
+            os.makedirs(self.output_dir, exist_ok=True)
+            self.output_dir_label.setText(self.output_dir)
+            
+        # Show progress
+        self.statusBar().showMessage("Generating synthetic CT...")
+        self.progress_bar.setValue(0)
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 100)
-        self.processing_thread.start()
         
-    def conversionFinished(self, result):
-        """Handle conversion completion"""
-        self.synthetic_ct = result
-        self.ct_viewer.set_image(result)
-        self.save_btn.setEnabled(True)
+        # Update UI
+        self.tabWidget.setCurrentWidget(self.conversion_tab)
+        
+        # Use integrated pipeline for end-to-end processing
+        if use_pipeline:
+            # Import the complete pipeline function
+            try:
+                from app.core.conversion.mri_to_ct_pipeline import run_complete_pipeline_with_evaluation
+                
+                # Create and start processing thread
+                self.processing_thread = ProcessingThread(
+                    run_complete_pipeline_with_evaluation,
+                    mri_path=self.mri_path,
+                    output_dir=self.output_dir,
+                    reference_ct_path=self.reference_ct_path if self.evaluate_check.isChecked() else None,
+                    model_type=model_type,
+                    region=region,
+                    apply_bias_field_correction=apply_bias,
+                    apply_denoising=apply_denoise,
+                    apply_normalization=apply_normalize,
+                    progress_callback=lambda val, msg: self.updateProgress(val) 
+                )
+                
+                self.processing_thread.finished.connect(self.pipelineFinished)
+                self.processing_thread.error.connect(self.processingError)
+                self.processing_thread.progress.connect(self.updateProgress)
+                self.processing_thread.start()
+                
+            except ImportError as e:
+                QMessageBox.critical(self, "Error", f"Could not import pipeline module: {str(e)}")
+                self.progress_bar.setVisible(False)
+                self.statusBar().showMessage("Error: Pipeline module not available")
+                return
+                
+        else:
+            # Individual steps approach (same as before)
+            # First preprocess
+            if not hasattr(self, 'preprocessed_mri') or self.preprocessed_mri is None:
+                self.preprocessMRI()
+            else:
+                # Skip to segmentation
+                self.segmentTissues()
+        
+    def pipelineFinished(self, result):
+        """Handle completion of the integrated pipeline"""
+        # Update UI
+        self.progress_bar.setValue(100)
         self.progress_bar.setVisible(False)
+        self.statusBar().showMessage("Synthetic CT generation completed successfully")
+        
+        # Check for errors
+        if isinstance(result, dict) and 'error' in result:
+            QMessageBox.warning(self, "Pipeline Error", 
+                               f"Pipeline completed with errors: {result['error']}")
+            return
+            
+        # Store results
+        if 'preprocessed_mri' in result:
+            self.preprocessed_mri = result['preprocessed_mri']
+            
+        if 'segmentations' in result:
+            self.segmentations = result['segmentations']
+            
+        if 'synthetic_ct' in result:
+            self.synthetic_ct = result['synthetic_ct']
+            
+        # Update viewers
+        if hasattr(self, 'preprocessed_mri_viewer') and self.preprocessed_mri:
+            self.preprocessed_mri_viewer.set_image(self.preprocessed_mri)
+            
+        if hasattr(self, 'segmentation_viewer') and self.segmentations:
+            # Use bone segmentation for display if available
+            if 'bone' in self.segmentations:
+                self.segmentation_viewer.set_image(self.segmentations['bone'])
+                
+        if hasattr(self, 'synthetic_ct_viewer') and self.synthetic_ct:
+            self.synthetic_ct_viewer.set_image(self.synthetic_ct)
+            
+        # Update comparison view if reference CT is available
+        if hasattr(self, 'comparison_viewer') and self.reference_ct and self.synthetic_ct:
+            self.comparison_viewer.set_images(self.reference_ct, self.synthetic_ct)
+            
+        # Display evaluation results if available
+        if 'evaluation_results' in result:
+            eval_results = result['evaluation_results']
+            self.displayEvaluationResults(eval_results)
+            
+        # Enable save button
+        self.save_outputs_btn.setEnabled(True)
+        
+        # Show success message
+        QMessageBox.information(self, "Success", "Synthetic CT generation completed successfully!")
+        
+    def displayEvaluationResults(self, eval_results):
+        """Display evaluation results in the GUI"""
+        if not hasattr(self, 'evaluation_tab'):
+            # Create evaluation tab if it doesn't exist
+            self.evaluation_tab = QWidget()
+            eval_layout = QVBoxLayout(self.evaluation_tab)
+            
+            # Create results text area
+            self.eval_results_text = QTextEdit()
+            self.eval_results_text.setReadOnly(True)
+            eval_layout.addWidget(self.eval_results_text)
+            
+            # Add to tab widget
+            self.tabWidget.addTab(self.evaluation_tab, "Evaluation")
+            
+        # Display results
+        results_text = "## Evaluation Results\n\n"
+        
+        if isinstance(eval_results, dict):
+            for metric, value in eval_results.items():
+                if isinstance(value, (int, float)):
+                    results_text += f"**{metric}**: {value:.4f}\n"
+                else:
+                    results_text += f"**{metric}**: {value}\n"
+        else:
+            # If it's an EvaluationResult object
+            if hasattr(eval_results, 'metrics'):
+                for metric, value in eval_results.metrics.items():
+                    results_text += f"**{metric}**: {value:.4f}\n"
+            
+        # Add path to report if available
+        if hasattr(eval_results, 'report_path') and eval_results.report_path:
+            results_text += f"\n**Detailed Report**: {eval_results.report_path}\n"
+            
+        # Add paths to images if available
+        if hasattr(eval_results, 'image_paths') and eval_results.image_paths:
+            results_text += "\n**Visualizations**:\n"
+            for image_path in eval_results.image_paths:
+                results_text += f"- {image_path}\n"
+                
+        # Set text
+        self.eval_results_text.setMarkdown(results_text)
+        
+        # Switch to evaluation tab
+        self.tabWidget.setCurrentWidget(self.evaluation_tab)
         
     def saveResults(self):
         """Save all results"""
