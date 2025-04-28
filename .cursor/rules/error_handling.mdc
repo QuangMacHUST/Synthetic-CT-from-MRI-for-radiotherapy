@@ -1,0 +1,71 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Error Handling and Recovery
+
+This project implements robust error handling and recovery mechanisms to ensure reliable operation of the synthetic CT generation pipeline in clinical settings.
+
+## Error Detection
+
+The system employs multiple error detection mechanisms:
+
+1. **Input Validation**:
+   - Verification of DICOM header information
+   - Image dimension and spacing validation
+   - MRI sequence type detection and validation
+   - Image quality assessment
+
+2. **Processing Monitoring**:
+   - Progress tracking for long-running operations
+   - Resource usage monitoring (memory, GPU)
+   - Execution time tracking for performance bottlenecks
+   - Intermediate result validation
+
+3. **Output Verification**:
+   - Synthetic CT quality assessment
+   - Anatomical consistency verification
+   - Dosimetric plausibility checks
+   - DICOM compliance validation
+
+## Error Handling Strategies
+
+The system implements several error handling strategies:
+
+- **Graceful degradation**: Falling back to alternative methods when optimal approaches fail
+- **Automatic retry**: Retrying operations with adjusted parameters
+- **Checkpointing**: Saving intermediate results for resumable processing
+- **Detailed logging**: Recording comprehensive information for troubleshooting
+
+## Recovery Mechanisms
+
+Recovery from errors is managed through:
+
+1. **Pipeline Recovery**:
+   - Resuming processing from last successful checkpoint
+   - Alternative processing paths for different error scenarios
+   - Automatic parameter adjustment for retry attempts
+   - Manual intervention points for complex errors
+
+2. **Data Recovery**:
+   - Backup of input and intermediate data
+   - Version control for processing states
+   - Audit trails for all processing steps
+   - Data consistency checks during recovery
+
+## Implementation
+
+Key components for error handling include:
+- [app/utils/error_handling.py](mdc:app/utils/error_handling.py): Error handling utilities
+- [app/utils/logging.py](mdc:app/utils/logging.py): Comprehensive logging system
+- [app/core/pipeline_recovery.py](mdc:app/core/pipeline_recovery.py): Pipeline recovery mechanisms
+
+## User Feedback
+
+The system provides informative feedback about errors:
+- **GUI error notifications**: User-friendly error messages
+- **Detailed logs**: Comprehensive information for technical users
+- **Suggested actions**: Recommendations for resolving issues
+- **Error classification**: Categorization of errors by severity and type
+

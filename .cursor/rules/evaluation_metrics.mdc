@@ -1,0 +1,51 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Evaluation Metrics and Quality Assurance
+
+This project implements comprehensive evaluation metrics to assess the quality of synthetic CT (sCT) images generated from MRI.
+
+## Quantitative Metrics
+
+The following metrics are used to quantitatively compare synthetic CT with reference CT:
+
+- **MAE (Mean Absolute Error)**: Average absolute difference in HU values
+- **MSE (Mean Squared Error)**: Average of squared differences in HU values
+- **RMSE (Root Mean Squared Error)**: Square root of MSE
+- **PSNR (Peak Signal-to-Noise Ratio)**: Ratio between maximum signal power and noise power
+- **SSIM (Structural Similarity Index)**: Perceptual metric that considers luminance, contrast and structure
+
+## Region-Specific Analysis
+
+Evaluation is performed separately for different tissue types:
+- **Bone regions**: Critical for accurate dose calculation
+- **Soft tissue regions**: Important for target volume delineation
+- **Air cavities**: Significant impact on dose distribution
+
+## Dose Comparison
+
+For radiotherapy applications, the following dose-related metrics are implemented:
+- **Gamma analysis**: Combined distance and dose difference criteria
+- **DVH (Dose Volume Histogram) comparison**: Comparing dose distribution statistics
+- **Dose difference maps**: Visualizing spatial distribution of dose differences
+
+## Quality Assurance (QA)
+
+Automated QA processes ensure reliable synthetic CT generation:
+- Automatic detection of regions with high uncertainty
+- Warning system for potential conversion errors
+- Quality scoring for overall synthetic CT reliability
+
+## Visualization Tools
+
+The system includes visualization tools for evaluation results:
+- Side-by-side comparison of real vs synthetic CT
+- Difference maps highlighting discrepancies
+- Overlay views for anatomical assessment
+
+Key implementation files:
+- [app/core/evaluation/](mdc:app/core/evaluation): Implementation of evaluation metrics
+- [app/visualization/](mdc:app/visualization): Visualization tools for evaluation results
+

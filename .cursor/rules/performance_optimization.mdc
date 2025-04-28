@@ -1,0 +1,62 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Performance Optimization
+
+This project implements various performance optimization techniques to ensure efficient processing of medical images throughout the synthetic CT generation pipeline.
+
+## Computational Optimization
+
+The system employs several computational optimization strategies:
+
+1. **GPU Acceleration**:
+   - CUDA-optimized image processing operations
+   - Batch processing for increased throughput
+   - Mixed precision training and inference
+   - Multi-GPU support for distributed processing
+
+2. **Memory Management**:
+   - Patch-based processing for large volumes
+   - Progressive loading of image data
+   - Memory-mapped file access for large datasets
+   - Caching of intermediate results
+
+3. **Algorithm Optimization**:
+   - Fast registration algorithms
+   - Optimized segmentation pipelines
+   - Efficient conversion networks
+   - Just-in-time compilation where applicable
+
+## Pipeline Optimization
+
+The processing pipeline is optimized through:
+- **Parallel processing**: Running independent steps concurrently
+- **Pipeline stages**: Processing data in a streaming fashion
+- **Task scheduling**: Intelligent allocation of resources
+- **Checkpointing**: Saving intermediate results to resume processing
+
+## Implementation Details
+
+Key components for performance optimization include:
+- [app/utils/gpu_utils.py](mdc:app/utils/gpu_utils.py): GPU acceleration utilities
+- [app/utils/parallel_processing.py](mdc:app/utils/parallel_processing.py): Parallel processing tools
+- [app/core/optimized_operations.py](mdc:app/core/optimized_operations.py): Optimized algorithms
+
+## Model Optimization
+
+Model-specific optimizations include:
+- **Model quantization**: Reducing model precision for faster inference
+- **Model pruning**: Removing redundant parameters
+- **Knowledge distillation**: Creating smaller, faster models
+- **Model fusion**: Combining operations for faster execution
+
+## Benchmarking and Profiling
+
+The system includes tools for:
+- **Performance benchmarking**: Measuring execution time and throughput
+- **Memory profiling**: Tracking memory usage during processing
+- **Bottleneck identification**: Finding performance bottlenecks
+- **Optimization verification**: Ensuring optimizations don't reduce quality
+

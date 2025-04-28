@@ -1,0 +1,68 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Clinical Integration
+
+This project is designed to integrate with clinical radiotherapy workflows, enabling the use of synthetic CT images within existing treatment planning systems.
+
+## Integration with Treatment Planning Systems (TPS)
+
+The synthetic CT generation system provides integration with common radiotherapy treatment planning systems:
+- **Eclipse** (Varian Medical Systems)
+- **RayStation** (RaySearch Laboratories)
+- **Monaco** (Elekta)
+- **Pinnacle** (Philips)
+
+Data exchange is supported through standard DICOM-RT objects:
+- DICOM CT images
+- DICOM RT Structure Sets
+- DICOM RT Dose objects
+- DICOM RT Plans
+
+## Clinical Workflow
+
+The project supports several MRI-only radiotherapy workflows:
+
+1. **MRI-only simulation**:
+   - MRI acquisition using simulation protocols
+   - Synthetic CT generation from MRI
+   - Target delineation on MRI
+   - Treatment planning on synthetic CT
+
+2. **Adaptive replanning**:
+   - Daily or weekly MRI acquisition
+   - Rapid synthetic CT generation
+   - Plan adaptation based on current anatomy
+   - Fast dose recalculation
+
+3. **Combined MR-CT planning**:
+   - CT for initial planning
+   - MRI for improved soft tissue visualization
+   - Registration of MRI to CT
+   - Synthetic CT for adaptation or verification
+
+## Clinical Validation
+
+The system has undergone various levels of clinical validation:
+- **Geometric validation**: Accuracy of anatomical structures
+- **Dosimetric validation**: Accuracy of dose calculation
+- **Workflow validation**: Integration with clinical processes
+- **Expert validation**: Radiologist and oncologist assessment
+
+## Implementation Details
+
+Key components for clinical integration include:
+- [app/utils/dicom_export.py](mdc:app/utils/dicom_export.py): DICOM export utilities
+- [app/utils/tps_integration.py](mdc:app/utils/tps_integration.py): Treatment planning system integration
+- [app/core/evaluation/dosimetric_validation.py](mdc:app/core/evaluation/dosimetric_validation.py): Dose calculation validation
+
+## Regulatory Considerations
+
+The system is designed with attention to regulatory requirements:
+- Clear documentation of algorithms and processes
+- Comprehensive validation protocols
+- Quality assurance processes
+- Audit trails for synthetic CT generation
+

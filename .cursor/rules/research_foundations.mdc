@@ -1,0 +1,64 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Research Foundations
+
+This project builds on a rich foundation of research in synthetic CT generation from MRI for radiotherapy planning. Recent advances have significantly improved the quality and clinical applicability of synthetic CT images.
+
+## Key Research Areas
+
+The project incorporates state-of-the-art approaches from several research domains:
+
+1. **Deep Learning for Medical Image Synthesis**:
+   - Convolutional neural networks for image-to-image translation
+   - Generative adversarial networks for realistic image generation
+   - Diffusion models for high-quality, controllable synthesis
+   - Transformer-based approaches for capturing long-range dependencies
+
+2. **Medical Image Registration**:
+   - Deformable registration algorithms for atlas-based approaches
+   - Deep learning-based registration methods
+   - Multi-modal registration between MRI and CT
+   - Registration uncertainty quantification
+
+3. **Tissue Segmentation and Classification**:
+   - Deep learning-based organ segmentation
+   - Multi-atlas segmentation approaches
+   - Uncertainty estimation in segmentation
+   - Domain adaptation for cross-scanner generalization
+
+4. **Dosimetric Validation**:
+   - Gamma analysis for dose comparison
+   - DVH metrics for plan quality assessment
+   - Monte Carlo dose calculation methods
+   - Uncertainty propagation in treatment planning
+
+## Recent Advances
+
+The project incorporates recent advances in synthetic CT generation:
+
+- **Hybrid approaches**: Combining atlas-based and deep learning methods
+- **Multi-sequence MRI utilization**: Using multiple MRI sequences for improved tissue contrast
+- **Conditional generation**: Controllable synthesis based on segmentation masks
+- **Uncertainty quantification**: Providing confidence intervals for synthetic HU values
+- **High-resolution synthesis**: Generating detailed synthetic CT at clinical resolutions
+
+## Clinical Applications
+
+Research on synthetic CT has enabled several clinical applications:
+
+- **MRI-only radiotherapy planning**: Eliminating the need for planning CT
+- **Adaptive radiotherapy**: Daily or weekly plan adaptation using MRI
+- **PET-MR attenuation correction**: Improving PET quantification in PET-MR systems
+- **Dose calculation on non-CT modalities**: Enabling dose calculation on MRI-derived images
+
+## Reference Papers
+
+The project draws inspiration from significant research publications:
+- Recent reviews of synthetic CT generation techniques
+- State-of-the-art deep learning approaches for medical image synthesis
+- Clinical validation studies for MRI-only radiotherapy planning
+- Novel evaluation metrics for synthetic CT quality assessment
+

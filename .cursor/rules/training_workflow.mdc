@@ -1,0 +1,67 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Training Workflow
+
+This project includes a comprehensive training workflow for developing models that convert MRI images to synthetic CT.
+
+## Training Pipeline
+
+The training pipeline consists of several stages:
+
+1. **Data Preparation**:
+   - Collection of paired MRI-CT datasets
+   - Preprocessing of images (normalization, registration)
+   - Dataset splitting (training, validation, test)
+   - Augmentation strategy definition
+
+2. **Model Training**:
+   - Training of segmentation models
+   - Training of conversion models (Atlas, CNN, GAN)
+   - Hyperparameter optimization
+   - Model evaluation during training
+
+3. **Model Validation**:
+   - Comprehensive evaluation on validation set
+   - Comparison with reference CT
+   - Region-specific performance analysis
+   - Clinical acceptability assessment
+
+4. **Model Deployment**:
+   - Conversion to optimized format
+   - Integration with runtime pipeline
+   - Performance benchmarking
+   - Version management
+
+## Training Infrastructure
+
+The training system supports various computational environments:
+- **Local workstations**: For small-scale development
+- **HPC clusters**: For large-scale training
+- **Cloud platforms**: For scalable deployment
+
+## Dataset Management
+
+The training workflow includes robust dataset management:
+- **Data versioning**: Tracking dataset versions
+- **Data splits**: Consistent training/validation/test splits
+- **Augmentation pipelines**: Consistent data augmentation
+- **Cross-validation**: Support for k-fold cross-validation
+
+## Implementation
+
+Key components for the training workflow include:
+- [app/training/train_segmentation.py](mdc:app/training/train_segmentation.py): Segmentation model training
+- [app/training/train_conversion.py](mdc:app/training/train_conversion.py): Conversion model training
+- [app/training/datasets.py](mdc:app/training/datasets.py): Dataset handling for training
+
+## Model Selection and Ensemble
+
+The training workflow supports:
+- **Automatic model selection**: Based on validation metrics
+- **Model ensembling**: Combining multiple trained models
+- **Transfer learning**: Using pre-trained models as starting points
+- **Domain adaptation**: Adapting models to new anatomical regions
+
